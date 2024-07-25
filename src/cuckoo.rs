@@ -1,9 +1,10 @@
 use crate::segvec::SegmentedVector;
 use rand;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt::Debug;
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct HashEntry<V: Clone + Copy + Eq + Debug> {
     idx: [usize; 2],
     val: V,
@@ -133,7 +134,7 @@ impl<V: Clone + Copy + Eq + Debug> CuckooHashMap<V> {
                     // overwrite the entry
                     let old_val = bkt.entries[j].val;
                     bkt.entries[j] = entry;
-                    self.tables[i].set(bkt_idx, *bkt);
+                    self.tables[i].set(bkt_idx, bkt);
                     return Some(old_val);
                 }
             }
@@ -146,7 +147,7 @@ impl<V: Clone + Copy + Eq + Debug> CuckooHashMap<V> {
                 if bkt.entries[j].idx[i] % table_capacity != bkt_idx {
                     // the entry can be overwritten
                     bkt.entries[j] = entry;
-                    self.tables[i].set(bkt_idx, *bkt);
+                    self.tables[i].set(bkt_idx, bkt);
                     return old_stash_entry;
                 }
             }
@@ -163,7 +164,7 @@ impl<V: Clone + Copy + Eq + Debug> CuckooHashMap<V> {
                         if bkt.entries[j].idx[i] % table_capacity != bkt_idx {
                             // the entry can be overwritten
                             bkt.entries[j] = entry;
-                            self.tables[i].set(bkt_idx, *bkt);
+                            self.tables[i].set(bkt_idx, bkt);
                             return old_stash_entry;
                         }
                     }
@@ -173,7 +174,7 @@ impl<V: Clone + Copy + Eq + Debug> CuckooHashMap<V> {
                 let evicted_entry = bkt.entries[evict_idx];
                 bkt.entries[evict_idx] = entry;
                 entry = evicted_entry;
-                self.tables[i].set(bkt_idx, *bkt);
+                self.tables[i].set(bkt_idx, bkt);
                 // update the bkt for the other table
                 let neg_i = 1 - i;
                 bkt_indices[neg_i] = entry.idx[neg_i] % self.tables[neg_i].capacity();
@@ -228,6 +229,16 @@ impl<V: Clone + Copy + Eq + Debug> CuckooHashMap<V> {
         for i in 0..2 {
             self.tables[i].double_size_and_fork_self();
         }
+    }
+
+    pub fn print_meta_state(&self) {
+        println!("CuckooHashMap meta state:");
+        println!("Size: {}", self.size);
+        for i in 0..2 {
+            println!("Table {}", i);
+            println!("Table capacity: {}", self.tables[i].capacity());
+        }
+        println!("Full bkt stash size: {}", self.full_bkt_stash.len());
     }
 
     pub fn print_state(&self) {

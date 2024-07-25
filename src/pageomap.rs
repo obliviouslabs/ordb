@@ -50,6 +50,12 @@ impl PageOmap {
         self.pos_map.size()
     }
 
+    pub fn print_meta_state(&self) {
+        println!("PageOmap meta state:");
+        self.pos_map.print_meta_state();
+        self.pageoram.print_meta_state();
+    }
+
     pub fn print_state(&self) {
         println!("PageOmap state:");
         self.pos_map.print_state();
@@ -72,6 +78,22 @@ mod tests {
     }
 
     #[test]
+    fn test_page_omap_dup() {
+        let mut page_omap = PageOmap::new();
+        let key = "hello";
+        let value = vec![1, 2, 3, 4];
+        let result = page_omap.insert(key, &value);
+        assert_eq!(result, None);
+        let result = page_omap.get(key);
+        assert_eq!(result, Some(value));
+        let value = vec![5, 6, 7, 8, 9];
+        let result = page_omap.insert(key, &value);
+        assert_eq!(result, Some(vec![1, 2, 3, 4]));
+        let result = page_omap.get(key);
+        assert_eq!(result, Some(value));
+    }
+
+    #[test]
     fn evict_test() {
         let mut map = PageOmap::new();
         let map_size = 16;
@@ -87,5 +109,25 @@ mod tests {
             // map.print_state();
         }
         assert_eq!(map_size, map.size());
+    }
+
+    #[test]
+    fn scale_and_dup_test() {
+        let mut map = PageOmap::new();
+        for i in 0..10000 {
+            map.insert(&i.to_string(), &vec![i as u8; 43]);
+        }
+        for i in 0..5000 {
+            let res = map.insert(&i.to_string(), &vec![(i + 1) as u8; 125]);
+            assert_eq!(res, Some(vec![i as u8; 43]));
+        }
+        for i in 0..5000 {
+            assert_eq!(map.get(&i.to_string()), Some(vec![(i + 1) as u8; 125]));
+        }
+        for i in 5000..10000 {
+            assert_eq!(map.get(&i.to_string()), Some(vec![i as u8; 43]));
+        }
+        assert_eq!(10000, map.size());
+        map.print_meta_state();
     }
 }

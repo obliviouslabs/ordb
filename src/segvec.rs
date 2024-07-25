@@ -55,7 +55,16 @@ impl<T: Clone> SegmentedVector<T> {
         Some(&self.segments[segment_index][within_segment_index])
     }
 
-    pub fn set(&mut self, index: usize, value: T) {
+    pub fn set(&mut self, index: usize, value: &T) {
+        if index >= self.size {
+            return;
+        }
+        // calculate log of index
+        let (segment_index, within_segment_index) = self.inner_indices(index);
+        self.segments[segment_index][within_segment_index] = value.clone();
+    }
+
+    pub fn set_move(&mut self, index: usize, value: T) {
         if index >= self.size {
             return;
         }
@@ -77,17 +86,17 @@ mod tests {
         let mut vec = SegmentedVector::<u128>::new();
         vec.double_size();
         vec.double_size();
-        vec.set(0, 42);
+        vec.set(0, &42);
         assert_eq!(vec.get(0), Some(&42));
-        vec.set(1023, 43);
+        vec.set(1023, &43);
         assert_eq!(vec.get(1023), Some(&43));
-        vec.set(1024, 44);
+        vec.set(1024, &44);
         assert_eq!(vec.get(1024), Some(&44));
-        vec.set(2047, 45);
+        vec.set(2047, &45);
         assert_eq!(vec.get(2047), Some(&45));
-        vec.set(2048, 46);
+        vec.set(2048, &46);
         assert_eq!(vec.get(2048), Some(&46));
-        vec.set(4095, 47);
+        vec.set(4095, &47);
         assert_eq!(vec.get(4095), Some(&47));
         assert_eq!(vec.get(4096), None);
     }

@@ -1,4 +1,5 @@
 mod cuckoo;
+mod dynamictree;
 mod pageomap;
 mod pageoram;
 mod segvec;
