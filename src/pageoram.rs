@@ -4,6 +4,7 @@ const PAGE_SIZE: usize = 4096;
 //     - 2 * MAX_ENTRY * (std::mem::size_of::<HashEntry<usize>>() + std::mem::size_of::<u16>());
 const BUFFER_SIZE: usize = PAGE_SIZE - std::mem::size_of::<u16>();
 use std::hash::Hash;
+use std::usize::MIN;
 use std::vec;
 
 use crate::cuckoo::HashEntry;
@@ -331,11 +332,22 @@ impl Page {
         true
     }
 
+    fn calcDeepest(self_idx: usize, other_idx: usize, layer_log_sizes: &Vec<u8>) -> u8 {
+        let tzcnt = (self_idx ^ other_idx).trailing_zeros() as u8;
+        for (i, log_layer_size) in layer_log_sizes.iter().enumerate() {
+            if tzcnt >= *log_layer_size {
+                return i as u8;
+            }
+        }
+        layer_log_sizes.len() as u8
+    }
+
     fn read_entry_and_retrieve_rest(
         &self,
         meta_data: &HashEntry<usize>,
         rest: &mut Vec<SortEntry>,
         self_level: u8,
+        layer_log_sizes: &Vec<u8>,
     ) -> Option<Vec<u8>> {
         let mut ptr = 0 as usize;
         const META_SIZE: usize = std::mem::size_of::<HashEntry<usize>>();
@@ -366,13 +378,18 @@ impl Page {
                 let entry_meta =
                     unsafe { &*(entry_meta_bytes.as_ptr() as *const HashEntry<usize>) };
                 let self_idx = entry_meta.get_val();
-                let deepest = (self_idx ^ meta_data.get_val()).trailing_zeros() as u8;
-                rest.push(SortEntry {
-                    deepest,
-                    src: self_level,
-                    len: full_entry_size,
-                    offset: ptr as u16,
-                });
+                let deepest = Self::calcDeepest(self_idx, meta_data.get_val(), layer_log_sizes);
+                if deepest <= self_level as u8 {
+                    // after fork, some entries may become invalid, i.e., cannot be placed in the current page
+                    // we simply remove them
+                    rest.push(SortEntry {
+                        deepest,
+                        src: self_level,
+                        len: full_entry_size,
+                        offset: ptr as u16,
+                        src_stash_idx: 0,
+                    });
+                }
             }
             ptr = next_ptr;
         }
@@ -380,11 +397,155 @@ impl Page {
     }
 }
 
+#[derive(Clone)]
+struct StashEntry {
+    pub kvs: Vec<(HashEntry<usize>, Vec<u8>)>,
+}
+
+impl StashEntry {
+    fn new() -> Self {
+        Self { kvs: Vec::new() }
+    }
+}
+
+struct Stash {
+    stash: Vec<StashEntry>,
+    versions: Vec<u8>,
+    size: usize,
+    log_size: u8,
+    num_bytes: usize,
+    num_kvs: usize,
+}
+
+impl Stash {
+    const STASH_ENTRY_META_SIZE: usize = std::mem::size_of::<(HashEntry<usize>, Vec<u8>)>();
+
+    pub fn new(init_size: usize) -> Self {
+        assert!((init_size & (init_size - 1)) == 0); // must be power of 2
+        let log_init_size = init_size.trailing_zeros() as u8;
+        let stash = vec![StashEntry::new(); init_size];
+        let versions = vec![log_init_size; init_size];
+        Self {
+            stash,
+            versions,
+            size: init_size,
+            log_size: log_init_size,
+            num_bytes: 0,
+            num_kvs: 0,
+        }
+    }
+    pub fn scale(&mut self, new_size: usize) {
+        assert!((new_size & (new_size - 1)) == 0); // must be power of 2
+        if new_size <= self.stash.len() {
+            // logical scale up/ down
+            self.size = new_size;
+            self.log_size = new_size.trailing_zeros() as u8;
+            return;
+        }
+        assert_eq!(self.size, self.stash.len());
+        let old_size = self.size;
+        self.stash.resize(new_size, StashEntry::new());
+        self.versions.resize(new_size, 0u8);
+        // copy the versions
+        let scale_factor = new_size / old_size;
+        for i in 1..scale_factor {
+            unsafe {
+                std::ptr::copy(
+                    self.versions.as_ptr(),
+                    self.versions
+                        .as_mut_ptr()
+                        .offset(i as isize * old_size as isize),
+                    old_size,
+                );
+            }
+        }
+        self.size = new_size;
+        self.log_size = new_size.trailing_zeros() as u8;
+    }
+
+    fn split_entry(&mut self, stash_idx: usize) {
+        let version = self.versions[stash_idx];
+        let num_stash_entry_rec = 1 << version;
+        if num_stash_entry_rec >= self.size {
+            return; // no need to split
+        }
+        let from_idx = stash_idx % num_stash_entry_rec;
+        let from_entry = &self.stash[from_idx];
+        let scaling_factor = self.size / num_stash_entry_rec;
+        let mut kvs_after_split = vec![Vec::new(); scaling_factor];
+        for (entry, value) in from_entry.kvs.iter() {
+            let new_idx = entry.get_val() % self.size;
+            kvs_after_split[new_idx / num_stash_entry_rec].push((entry.clone(), value.clone()));
+        }
+        for i in 0..scaling_factor {
+            let to_idx = i * num_stash_entry_rec + from_idx;
+            std::mem::swap(&mut self.stash[to_idx].kvs, &mut kvs_after_split[i]);
+            self.versions[to_idx] = self.log_size;
+        }
+    }
+
+    pub fn get_and_remove(&mut self, idx: usize) -> Vec<Vec<(HashEntry<usize>, Vec<u8>)>> {
+        let stash_idx = idx % self.size;
+        self.split_entry(stash_idx); // potentially split the entry
+        let version = self.versions[stash_idx];
+        let num_stash_entry_rec = 1 << version;
+        let shrink_factor = num_stash_entry_rec / self.size;
+        // the stash may have shrinked, we need to merge the entries
+        let mut ret: Vec<Vec<(HashEntry<usize>, Vec<u8>)>> = vec![Vec::new(); shrink_factor];
+        for i in 0..shrink_factor {
+            let from_idx = i * self.size + stash_idx;
+            std::mem::swap(&mut self.stash[from_idx].kvs, &mut ret[i]);
+            self.versions[from_idx] = self.log_size;
+            for (_, value) in ret[i].iter() {
+                self.num_bytes -= value.len() + Self::STASH_ENTRY_META_SIZE;
+            }
+            self.num_kvs -= ret[i].len();
+        }
+        ret
+    }
+
+    pub fn insert(&mut self, idx: usize, entry: HashEntry<usize>, value: Vec<u8>) {
+        let stash_idx = idx % self.size;
+        self.split_entry(stash_idx); // potentially split the entry
+                                     // we don't perform merge during insert
+        self.num_bytes += value.len() + Self::STASH_ENTRY_META_SIZE;
+        self.num_kvs += 1;
+        self.stash[stash_idx].kvs.push((entry, value));
+    }
+
+    pub fn concat(&mut self, idx: usize, entries: Vec<(HashEntry<usize>, Vec<u8>)>) {
+        let stash_idx = idx % self.size;
+        self.split_entry(stash_idx); // potentially split the entry
+        self.num_kvs += entries.len();
+        for (_, value) in &entries {
+            self.num_bytes += value.len() + Self::STASH_ENTRY_META_SIZE;
+        }
+        if self.stash[stash_idx].kvs.is_empty() {
+            self.stash[stash_idx].kvs = entries;
+        } else {
+            // this should not happen in our usecase
+            self.stash[stash_idx].kvs.extend(entries);
+        }
+    }
+
+    pub fn avg_load(&self) -> f64 {
+        self.num_kvs as f64 / self.size as f64
+    }
+
+    pub fn num_kvs(&self) -> usize {
+        self.num_kvs
+    }
+
+    pub fn num_bytes(&self) -> usize {
+        self.num_bytes + self.stash.len() * std::mem::size_of::<StashEntry>()
+    }
+}
+
 pub struct PageOram {
     tree: ORAMTree<Page>,
-    stash: Vec<Vec<(HashEntry<usize>, Vec<u8>)>>,
-    num_stash_entry: usize,
-    num_bytes_stash: usize,
+    stash: Stash,
+    num_entry: usize,
+    num_bytes: usize,
 }
 #[derive(Clone)]
 struct SortEntry {
@@ -392,65 +553,16 @@ struct SortEntry {
     src: u8,
     len: u16,
     offset: u16,
+    src_stash_idx: u16,
 }
 
 impl PageOram {
     pub fn new() -> Self {
-        let mut stash: Vec<Vec<(HashEntry<usize>, Vec<u8>)>> = Vec::with_capacity(MIN_SEGMENT_SIZE);
-        for _ in 0..MIN_SEGMENT_SIZE {
-            stash.push(Vec::new());
-        }
         Self {
-            tree: ORAMTree::new(1024),
-            stash,
-            num_stash_entry: 0,
-            num_bytes_stash: 0,
-        }
-    }
-    const STASH_ENTRY_META_SIZE: usize =
-        std::mem::size_of::<HashEntry<usize>>() + std::mem::size_of::<Vec<u8>>();
-    // read entry from the stash vec, update result, and evict the remaining entries to the page
-    fn read_and_evict_stash(
-        &mut self,
-        entry: &HashEntry<usize>,
-        result: &mut Option<Vec<u8>>,
-        page: &mut Page,
-        page_idx: usize,
-        page_num: usize,
-    ) {
-        let stash_vec = self.stash.get_mut(page_idx).unwrap();
-        // find the entry in the stash, don't remove it yet, just mark the index
-        let mut read_idx = stash_vec.len();
-        for i in 0..stash_vec.len() {
-            let (e, value) = &stash_vec[i];
-            if e == entry {
-                read_idx = i;
-                *result = Some(value.clone());
-                break;
-            }
-        }
-        page.compact(page_idx, page_num);
-
-        // try to write stash vec to the page
-        // loop backwards for efficient removal and consistent index
-        for i in (0..stash_vec.len()).rev() {
-            let (entry, value) = &stash_vec[i];
-            // if it's the entry that we just read, just remove it
-            if i != read_idx {
-                if !page.insert(&entry, &value) {
-                    // page is full
-                    if i > read_idx {
-                        // now we need to remove the entry that we just read
-                        let (_, read_val) = stash_vec.remove(read_idx);
-                        self.num_stash_entry -= 1;
-                        self.num_bytes_stash -= read_val.len() + Self::STASH_ENTRY_META_SIZE;
-                    }
-                    break;
-                }
-            }
-            self.num_stash_entry -= 1;
-            self.num_bytes_stash -= value.len() + Self::STASH_ENTRY_META_SIZE;
-            stash_vec.remove(i);
+            tree: ORAMTree::new(MIN_SEGMENT_SIZE * 16),
+            stash: Stash::new(MIN_SEGMENT_SIZE),
+            num_entry: 0,
+            num_bytes: 0,
         }
     }
 
@@ -463,54 +575,45 @@ impl PageOram {
         let page_idx = entry.get_val();
         let (path, layer_sizes) = self.tree.read_path(page_idx);
         let num_layer = layer_sizes.len();
-        let mut result: Option<Vec<u8>> = None;
-        let mut rest: Vec<SortEntry> = Vec::new();
-        for (i, page) in path.iter().enumerate() {
-            let page_result = page.read_entry_and_retrieve_rest(entry, &mut rest, i as u8);
-            if page_result.is_some() {
-                result = page_result;
-            }
-        }
-        let page_idx_in_stash = page_idx % self.stash.len();
-        let stash_vec = self.stash.get(page_idx_in_stash).unwrap();
-        if stash_vec.len() >= 65536 {
-            // TODO
-            println!("stash is catastrophically full");
-            return None;
-        }
-        const META_SIZE: usize = std::mem::size_of::<HashEntry<usize>>();
-        for (i, (stash_entry, value)) in stash_vec.iter().enumerate() {
-            if stash_entry == entry {
-                result = Some(value.clone());
-            } else {
-                let deepest = (stash_entry.get_val() ^ page_idx).trailing_zeros() as u8;
-                rest.push(SortEntry {
-                    deepest,
-                    src: num_layer as u8,
-                    len: (META_SIZE + 2 + value.len()) as u16,
-                    offset: i as u16,
-                });
-            }
-            self.num_bytes_stash -= value.len() + Self::STASH_ENTRY_META_SIZE;
-        }
-        self.num_stash_entry -= stash_vec.len();
-
         let layer_log_sizes: Vec<u8> = layer_sizes
             .iter()
             .map(|x| x.trailing_zeros() as u8)
             .collect();
-        for entry in rest.iter_mut() {
-            // change the deepest from the number of common trailing bits to the actual level number
-            let mut success = false;
-            for (i, log_layer_size) in layer_log_sizes.iter().enumerate() {
-                if entry.deepest >= *log_layer_size {
-                    entry.deepest = i as u8;
-                    success = true;
-                    break;
-                }
+        let mut result: Option<Vec<u8>> = None;
+        let mut rest: Vec<SortEntry> = Vec::new();
+        for (i, page) in path.iter().enumerate() {
+            let page_result =
+                page.read_entry_and_retrieve_rest(entry, &mut rest, i as u8, &layer_log_sizes);
+            if page_result.is_some() {
+                result = page_result;
             }
-            if !success {
-                entry.deepest = num_layer as u8;
+        }
+        let stash_vecs = self.stash.get_and_remove(page_idx);
+        // if stash_vec.len() >= 65536 {
+        //     // TODO
+        //     println!("stash is catastrophically full");
+        //     return None;
+        // }
+        const META_SIZE: usize = std::mem::size_of::<HashEntry<usize>>();
+        for (chunk_idx, stash_vec) in stash_vecs.iter().enumerate() {
+            for (i, (stash_entry, value)) in stash_vec.iter().enumerate() {
+                if stash_entry == entry {
+                    result = Some(value.clone());
+                } else {
+                    let deepest =
+                        Page::calcDeepest(stash_entry.get_val(), page_idx, &layer_log_sizes);
+                    if deepest >= num_layer as u8 {
+                        // after the stash forks, some entries may become invalid, i.e., cannot be placed in the current sub vector
+                        continue;
+                    }
+                    rest.push(SortEntry {
+                        deepest,
+                        src: num_layer as u8,
+                        len: (META_SIZE + 2 + value.len()) as u16,
+                        offset: i as u16,
+                        src_stash_idx: chunk_idx as u16,
+                    });
+                }
             }
         }
 
@@ -538,7 +641,8 @@ impl PageOram {
                 }
                 if entry.src == num_layer as u8 {
                     // copy from stash
-                    let (stash_entry, value) = &stash_vec[entry.offset as usize];
+                    let (stash_entry, value) =
+                        &stash_vecs[entry.src_stash_idx as usize][entry.offset as usize];
                     page.insert(stash_entry, value);
                 } else {
                     // copy from page
@@ -556,8 +660,8 @@ impl PageOram {
         new_stash_vec.reserve(allowed_set.len());
         for entry in allowed_set.iter() {
             if entry.src == num_layer as u8 {
-                let (stash_entry, value) = &stash_vec[entry.offset as usize];
-                self.num_bytes_stash += value.len() + Self::STASH_ENTRY_META_SIZE;
+                let (stash_entry, value) =
+                    &stash_vecs[entry.src_stash_idx as usize][entry.offset as usize];
                 new_stash_vec.push((stash_entry.clone(), value.clone()));
             } else {
                 let src_page = path[entry.src as usize];
@@ -566,34 +670,48 @@ impl PageOram {
                 let value = src_page.buffer
                     [entry.offset as usize + META_SIZE + 2..(entry.offset + entry.len) as usize]
                     .to_vec();
-                self.num_bytes_stash += value.len() + Self::STASH_ENTRY_META_SIZE;
                 new_stash_vec.push((meta_data.clone(), value));
             }
         }
-        self.num_stash_entry += new_stash_vec.len();
-        self.stash[page_idx_in_stash] = new_stash_vec;
+        self.stash.concat(page_idx, new_stash_vec);
 
         // write back path
-        self.tree.write_path(page_idx, &new_path);
+        self.tree.write_path_move(page_idx, new_path);
 
         if value_to_write.is_some() || result.is_some() {
+            if result.is_none() {
+                self.num_entry += 1;
+                self.num_bytes += value_to_write.as_ref().unwrap().len() + META_SIZE;
+            } else if value_to_write.is_some() {
+                self.num_bytes +=
+                    value_to_write.as_ref().unwrap().len() - result.as_ref().unwrap().len();
+            }
+
             let mut new_entry = entry.clone();
             new_entry.set_val(new_page_id);
-            let new_page_idx_in_stash = new_page_id % self.stash.len();
             let value_to_write_clone = if value_to_write.is_some() {
                 value_to_write.unwrap().clone()
             } else {
                 result.clone().unwrap()
             };
-            self.num_stash_entry += 1;
-            self.num_bytes_stash += value_to_write_clone.len() + Self::STASH_ENTRY_META_SIZE;
-            let stash_vec_for_new_page = self.stash.get_mut(new_page_idx_in_stash).unwrap();
-            stash_vec_for_new_page.push((new_entry, value_to_write_clone));
+            self.stash
+                .insert(new_page_id, new_entry, value_to_write_clone);
+        }
+        let load_factor = self.num_bytes as f64 / (self.tree.total_size() * BUFFER_SIZE) as f64;
+        if load_factor > 0.5 {
+            self.scale();
         }
         result
     }
 
-    fn scale(&mut self) {}
+    fn scale(&mut self) {
+        let target_branching_factor = BUFFER_SIZE as usize * self.num_entry / self.num_bytes;
+        println!("Scaling to branching factor {}", target_branching_factor);
+        self.tree.scale(target_branching_factor);
+        let new_stash_size = self.tree.min_layer_size();
+        // todo: optimize this with shallow copy
+        self.stash.scale(new_stash_size)
+    }
 
     pub fn read(&mut self, entry: &HashEntry<usize>, new_page_id: usize) -> Option<Vec<u8>> {
         self.read_or_write(entry, None, new_page_id)
@@ -611,39 +729,39 @@ impl PageOram {
     pub fn print_meta_state(&self) {
         println!("PageOram meta state:");
         // println!("PageOram pages count: {}", self.pages.capacity());
-        println!("PageOram stash entry count: {}", self.num_stash_entry);
+        println!("PageOram stash kv count: {}", self.stash.num_kvs());
         println!(
             "PageOram stash size: {} MB",
-            self.num_bytes_stash as f64 / (1024 * 1024) as f64
+            self.stash.num_bytes() as f64 / (1024 * 1024) as f64
         );
     }
-    pub fn print_state(&self) {
-        // for i in 0..self.pages.capacity() {
-        //     let page = self.pages.get(i).unwrap();
-        //     println!(
-        //         "Page {} num entries: {} total bytes {}",
-        //         i,
-        //         page.entries.len(),
-        //         page.current_size
-        //     );
-        //     // for j in 0..MAX_ENTRY {
-        //     //     let entry = &page.hashEntries[j];
-        //     //     if !Page::is_empty_entry(entry, i, self.pages.capacity()) {
-        //     //         println!("Entry: {:?}", entry);
-        //     //     }
-        //     // }
-        // }
-        for i in 0..self.stash.len() {
-            let stash_vec = &self.stash[i];
-            if stash_vec.is_empty() {
-                continue;
-            }
-            println!("Stash {}", i);
-            for (entry, value) in stash_vec {
-                println!("Entry: {:?}", entry);
-            }
-        }
-    }
+    // pub fn print_state(&self) {
+    //     // for i in 0..self.pages.capacity() {
+    //     //     let page = self.pages.get(i).unwrap();
+    //     //     println!(
+    //     //         "Page {} num entries: {} total bytes {}",
+    //     //         i,
+    //     //         page.entries.len(),
+    //     //         page.current_size
+    //     //     );
+    //     //     // for j in 0..MAX_ENTRY {
+    //     //     //     let entry = &page.hashEntries[j];
+    //     //     //     if !Page::is_empty_entry(entry, i, self.pages.capacity()) {
+    //     //     //         println!("Entry: {:?}", entry);
+    //     //     //     }
+    //     //     // }
+    //     // }
+    //     for i in 0..self.stash.len() {
+    //         let stash_vec = &self.stash[i];
+    //         if stash_vec.is_empty() {
+    //             continue;
+    //         }
+    //         println!("Stash {}", i);
+    //         for (entry, value) in stash_vec {
+    //             println!("Entry: {:?}", entry);
+    //         }
+    //     }
+    // }
 }
 
 mod tests {
@@ -668,13 +786,13 @@ mod tests {
     #[test]
     fn test_page_oram_medium() {
         let mut page_oram = PageOram::new();
-        let round = 10000;
+        let round = 100000;
         let mut ref_vec: Vec<(HashEntry<usize>, Vec<u8>)> = Vec::new();
 
         for i in 0..round {
             let mut entry = HashEntry::new();
             entry.set_idx([random(), random()]);
-            let val_len = random::<usize>() % 100;
+            let val_len = random::<usize>() % 250;
             let value: Vec<u8> = (0..val_len).map(|_| random::<u8>()).collect();
             let new_page_id = random::<usize>();
             let result = page_oram.write(&entry, &value, new_page_id);

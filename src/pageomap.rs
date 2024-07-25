@@ -59,7 +59,7 @@ impl PageOmap {
     pub fn print_state(&self) {
         println!("PageOmap state:");
         self.pos_map.print_state();
-        self.pageoram.print_state();
+        // self.pageoram.print_state();
     }
 }
 
