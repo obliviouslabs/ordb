@@ -3,13 +3,12 @@ const PAGE_SIZE: usize = 4096;
 // const BUFFER_SIZE: usize = PAGE_SIZE
 //     - 2 * MAX_ENTRY * (std::mem::size_of::<HashEntry<usize>>() + std::mem::size_of::<u16>());
 const BUFFER_SIZE: usize = PAGE_SIZE - std::mem::size_of::<u16>();
-use std::hash::Hash;
-use std::usize::MIN;
+
 use std::vec;
 
 use crate::cuckoo::HashEntry;
 use crate::dynamictree::ORAMTree;
-use crate::segvec::{SegmentedVector, MIN_SEGMENT_SIZE};
+use crate::segvec::MIN_SEGMENT_SIZE;
 // #[derive(Clone)]
 // struct Page {
 //     hashEntries: [HashEntry<usize>; MAX_ENTRY],
@@ -685,8 +684,6 @@ impl PageOram {
 }
 
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
     use rand::random;
     #[test]
@@ -709,7 +706,7 @@ mod tests {
         let round = 100000;
         let mut ref_vec: Vec<(HashEntry<usize>, Vec<u8>)> = Vec::new();
 
-        for i in 0..round {
+        for _ in 0..round {
             let mut entry = HashEntry::new();
             entry.set_idx([random(), random()]);
             let val_len = random::<usize>() % 250;
@@ -721,7 +718,7 @@ mod tests {
             ref_vec.push((entry, value));
         }
 
-        for r in 0..10 {
+        for _ in 0..10 {
             for (entry, value) in ref_vec.iter_mut() {
                 let new_page_id = random();
                 let result = page_oram.read(&entry, new_page_id);

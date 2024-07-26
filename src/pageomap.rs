@@ -1,8 +1,6 @@
-use core::hash;
-
-use crate::cuckoo::{CuckooHashMap, HashEntry};
+use crate::cuckoo::CuckooHashMap;
 use crate::pageoram::PageOram;
-use crate::segvec::{SegmentedVector, MIN_SEGMENT_SIZE};
+
 use std::fmt::Debug;
 pub struct PageOmap {
     pageoram: PageOram,

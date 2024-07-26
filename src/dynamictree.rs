@@ -1,4 +1,4 @@
-use crate::segvec::{SegmentedVector, MIN_SEGMENT_SIZE};
+use crate::segvec::SegmentedVector;
 
 pub struct ORAMTree<T: Clone + Copy> {
     tree: Vec<SegmentedVector<T>>,
