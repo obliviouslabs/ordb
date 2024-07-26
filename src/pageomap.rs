@@ -128,4 +128,19 @@ mod tests {
         assert_eq!(10000, map.size());
         map.print_meta_state();
     }
+
+    #[test]
+    fn omap_large() {
+        let mut map = PageOmap::new();
+        let size = 1000000;
+        for i in 0..size {
+            map.insert(&i.to_string(), &vec![i as u8; i % 400]);
+        }
+        let read_round = 1000000;
+        for r in 0..read_round {
+            let i = (r * 929) % size;
+            assert_eq!(map.get(&i.to_string()), Some(vec![i as u8; i % 400]));
+        }
+        assert_eq!(size, map.size());
+    }
 }

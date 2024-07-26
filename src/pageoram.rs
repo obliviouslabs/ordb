@@ -9,176 +9,6 @@ use std::vec;
 use crate::cuckoo::HashEntry;
 use crate::dynamictree::ORAMTree;
 use crate::segvec::MIN_SEGMENT_SIZE;
-// #[derive(Clone)]
-// struct Page {
-//     hashEntries: [HashEntry<usize>; MAX_ENTRY],
-//     offsets: [u16; MAX_ENTRY],
-//     buffer: [u8; BUFFER_SIZE],
-// }
-
-// impl Page {
-//     fn new() -> Self {
-//         Self {
-//             hashEntries: [HashEntry::new(); MAX_ENTRY],
-//             offsets: [0; MAX_ENTRY],
-//             buffer: [0; BUFFER_SIZE],
-//         }
-//     }
-
-//     pub fn read_and_remove(&mut self, entry: &HashEntry<usize>) -> Option<Vec<u8>> {
-//         for i in 0..MAX_ENTRY {
-//             if self.hashEntries[i] == *entry {
-//                 let begin_offset = if i == 0 {
-//                     0 as usize
-//                 } else {
-//                     self.offsets[i - 1] as usize
-//                 };
-//                 let end_offset = self.offsets[i] as usize;
-//                 self.hashEntries[i] = HashEntry::new();
-//                 return Some(self.buffer[begin_offset..end_offset].to_vec());
-//             }
-//         }
-//         None
-//     }
-
-//     fn is_empty_entry(entry: &HashEntry<usize>, page_idx: usize, page_num: usize) -> bool {
-//         if entry.is_empty() {
-//             return true;
-//         }
-//         if entry.get_val() % page_num != page_idx {
-//             // after rescaling, the entries with wrong page_num becomes empty
-//             return true;
-//         }
-//         false
-//     }
-
-//     // Compact the page by moving all the data to the beginning of the buffer
-//     // return the number of entries that are compacted
-//     pub fn compact(&mut self, page_idx: usize, page_num: usize) -> usize {
-//         let mut write_offset: u16 = 0;
-//         let mut read_offset: u16 = 0;
-//         let mut write_idx: usize = 0;
-//         for read_idx in 0..MAX_ENTRY {
-//             if self.offsets[read_idx] == 0 {
-//                 // reaches end
-//                 break;
-//             }
-//             let len = self.offsets[read_idx] - read_offset;
-//             if !Self::is_empty_entry(&self.hashEntries[read_idx], page_idx, page_num) {
-//                 if len > 0 {
-//                     unsafe {
-//                         let src = self.buffer.as_ptr().offset(read_offset as isize);
-//                         let dst = self.buffer.as_mut_ptr().offset(write_offset as isize);
-//                         std::ptr::copy(src, dst, len as usize);
-//                     }
-//                 }
-//                 self.offsets[write_idx] = write_offset + len;
-//                 self.hashEntries[write_idx] = self.hashEntries[read_idx];
-//                 if read_idx != write_idx {
-//                     self.offsets[read_idx] = 0;
-//                     self.hashEntries[read_idx] = HashEntry::new();
-//                 }
-//                 write_offset += len;
-//                 write_idx += 1;
-//             }
-//             read_offset += len;
-//         }
-//         write_idx as usize
-//     }
-
-//     pub fn insert(&mut self, write_idx: usize, entry: &HashEntry<usize>, value: &[u8]) -> bool {
-//         if write_idx >= MAX_ENTRY {
-//             return false;
-//         }
-//         let write_offset = if write_idx == 0 {
-//             0 as usize
-//         } else {
-//             self.offsets[write_idx - 1] as usize
-//         };
-//         let len = value.len();
-//         if write_offset + len > BUFFER_SIZE {
-//             return false;
-//         }
-//         self.offsets[write_idx] = (write_offset + len) as u16;
-//         self.hashEntries[write_idx] = *entry;
-//         unsafe {
-//             let src = value.as_ptr();
-//             let dst = self.buffer.as_mut_ptr().offset(write_offset as isize);
-//             std::ptr::copy_nonoverlapping(src, dst, len);
-//         }
-//         true
-//     }
-// }
-
-/*
-use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Page {
-    entries: VecDeque<(HashEntry<usize>, Vec<u8>)>,
-    current_size: usize,
-}
-
-impl Page {
-    fn new() -> Self {
-        Page {
-            entries: VecDeque::new(),
-            current_size: std::mem::size_of::<Page>(),
-        }
-    }
-
-    fn read_and_remove(&mut self, meta_data: &HashEntry<usize>) -> Option<Vec<u8>> {
-        if let Some(pos) = self.entries.iter().position(|(md, _)| md == meta_data) {
-            let (_, value) = self.entries.remove(pos).unwrap();
-            return Some(value);
-        }
-        None
-    }
-
-    fn insert(&mut self, meta_data: HashEntry<usize>, entry: Vec<u8>) -> bool {
-        let new_entry = (meta_data, entry);
-        let serialized_size = bincode::serialized_size(&new_entry).unwrap() as usize;
-
-        if self.current_size + serialized_size > PAGE_SIZE {
-            return false;
-        }
-        self.current_size += serialized_size;
-        self.entries.push_back(new_entry);
-        true
-    }
-}
-
-#[derive(Clone)]
-struct RawPage {
-    buffer: [u8; PAGE_SIZE],
-}
-
-impl RawPage {
-    fn new() -> Self {
-        RawPage {
-            buffer: [0; PAGE_SIZE],
-        }
-    }
-
-    fn from_page(page: &Page) -> Result<Self, bincode::Error> {
-        let serialized_data = bincode::serialize(page)?;
-        let mut buffer = [0u8; PAGE_SIZE];
-
-        if serialized_data.len() > PAGE_SIZE {
-            return Err(bincode::ErrorKind::SizeLimit.into());
-        }
-
-        buffer[..serialized_data.len()].copy_from_slice(&serialized_data);
-
-        Ok(RawPage { buffer })
-    }
-
-    fn to_page(&self) -> Result<Page, bincode::Error> {
-        bincode::deserialize(&self.buffer)
-    }
-}
-*/
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -618,6 +448,11 @@ impl PageOram {
         }
         let load_factor = self.num_bytes as f64 / (self.tree.total_size() * BUFFER_SIZE) as f64;
         if load_factor > 0.5 {
+            println!(
+                "load bytes: {} total bytes: {}",
+                self.num_bytes,
+                self.tree.total_size() * BUFFER_SIZE
+            );
             self.scale();
         }
         result
@@ -709,7 +544,7 @@ mod tests {
         for _ in 0..round {
             let mut entry = HashEntry::new();
             entry.set_idx([random(), random()]);
-            let val_len = random::<usize>() % 250;
+            let val_len = random::<usize>() % 128;
             let value: Vec<u8> = (0..val_len).map(|_| random::<u8>()).collect();
             let new_page_id = random::<usize>();
             let result = page_oram.write(&entry, &value, new_page_id);

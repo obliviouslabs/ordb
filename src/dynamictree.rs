@@ -14,7 +14,7 @@ impl<T: Clone + Copy> ORAMTree<T> {
         let total_size = tree[0].capacity();
         Self {
             tree,
-            max_branching_factor: 16,
+            max_branching_factor: 1,
             top_vec_max_size,
             total_size,
         }
@@ -45,6 +45,7 @@ impl<T: Clone + Copy> ORAMTree<T> {
     }
 
     pub fn scale(&mut self, target_branching_factor: usize) {
+        let init_min_layer_size = self.min_layer_size();
         let mut below_layer_size = self.tree[0].capacity() * (target_branching_factor + 1);
         // if the current branching factor is too large, don't scale the bottom layer. Instead, first scale the middle layers
         if self.max_branching_factor > target_branching_factor {
@@ -66,8 +67,9 @@ impl<T: Clone + Copy> ORAMTree<T> {
         if below_layer_size > self.top_vec_max_size {
             // add a new layer
             let mut new_top_vec = SegmentedVector::new();
-            while new_top_vec.capacity() * target_branching_factor < below_layer_size {
-                new_top_vec.double_size();
+            // while new_top_vec.capacity() * target_branching_factor < below_layer_size {
+            while new_top_vec.capacity() < init_min_layer_size {
+                new_top_vec.double_size_and_fork_self();
             }
             self.total_size += new_top_vec.capacity();
             self.tree.push(new_top_vec);
