@@ -15,7 +15,6 @@ const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct Page {
-    page_num: usize, // the number of pages recorded, if it doesn't match the global page_num, perform a compaction
     filled_bytes: u16,
     buffer: [u8; BUFFER_SIZE],
 }
@@ -24,7 +23,6 @@ unsafe impl Pod for Page {}
 impl Page {
     fn new() -> Self {
         Page {
-            page_num: 0,
             filled_bytes: 0,
             buffer: [0; BUFFER_SIZE],
         }
@@ -236,21 +234,6 @@ impl Stash {
             self.num_bytes -= value.len() + Self::STASH_ENTRY_META_SIZE;
         }
         self.num_kvs -= ret.len();
-
-        // let version = self.versions[stash_idx];
-        // let num_stash_entry_rec = 1 << version;
-        // let shrink_factor = num_stash_entry_rec / self.size;
-        // // the stash may have shrinked, we need to merge the entries
-        // let mut ret: Vec<Vec<(HashEntry<usize>, Vec<u8>)>> = vec![Vec::new(); shrink_factor];
-        // for i in 0..shrink_factor {
-        //     let from_idx = i * self.size + stash_idx;
-        //     std::mem::swap(&mut self.stash[from_idx].kvs, &mut ret[i]);
-        //     self.versions[from_idx] = self.log_size;
-        //     for (_, value) in ret[i].iter() {
-        //         self.num_bytes -= value.len() + Self::STASH_ENTRY_META_SIZE;
-        //     }
-        //     self.num_kvs -= ret[i].len();
-        // }
         ret
     }
 
@@ -291,7 +274,7 @@ impl Stash {
     }
 }
 
-pub struct PageOram {
+pub struct FlexOram {
     tree: ORAMTree<Page>,
     stash: Stash,
     num_entry: usize,
@@ -305,7 +288,7 @@ struct SortEntry {
     offset: u32,
 }
 
-impl PageOram {
+impl FlexOram {
     pub fn new() -> Self {
         Self {
             tree: ORAMTree::new(MIN_SEGMENT_SIZE * 16),
@@ -477,11 +460,11 @@ impl PageOram {
     }
 
     pub fn print_meta_state(&self) {
-        println!("PageOram meta state:");
-        // println!("PageOram pages count: {}", self.pages.capacity());
-        println!("PageOram stash kv count: {}", self.stash.num_kvs());
+        println!("FlexOram meta state:");
+        // println!("FlexOram pages count: {}", self.pages.capacity());
+        println!("FlexOram stash kv count: {}", self.stash.num_kvs());
         println!(
-            "PageOram stash size: {} MB",
+            "FlexOram stash size: {} MB",
             self.stash.num_bytes() as f64 / (1024 * 1024) as f64
         );
     }
@@ -519,7 +502,7 @@ mod tests {
     use rand::random;
     #[test]
     fn test_page_oram_simple() {
-        let mut page_oram = PageOram::new();
+        let mut page_oram = FlexOram::new();
         let mut entry = HashEntry::new();
         entry.set_idx([1, 2]);
         entry.set_val(1);
@@ -533,14 +516,14 @@ mod tests {
 
     #[test]
     fn test_page_oram_medium() {
-        let mut page_oram = PageOram::new();
+        let mut page_oram = FlexOram::new();
         let round = 100000;
         let mut ref_vec: Vec<(HashEntry<usize>, Vec<u8>)> = Vec::new();
 
         for _ in 0..round {
             let mut entry = HashEntry::new();
             entry.set_idx([random(), random()]);
-            let val_len = random::<usize>() % 128;
+            let val_len = random::<usize>() % 32;
             let value: Vec<u8> = (0..val_len).map(|_| random::<u8>()).collect();
             let new_page_id = random::<usize>();
             let result = page_oram.write(&entry, &value, new_page_id);

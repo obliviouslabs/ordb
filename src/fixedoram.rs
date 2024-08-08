@@ -16,7 +16,7 @@ use bytemuck::{Pod, Zeroable};
 const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct BlockId {
+pub struct BlockId {
     page_idx: usize,
     uid: u64,
 }
@@ -36,7 +36,6 @@ impl<T> SimpleVal for T where T: Clone + Copy + Pod + Zeroable + Debug {}
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct Page<T: SimpleVal, const N: usize> {
-    page_num: usize, // the number of pages recorded, if it doesn't match the global page_num, perform a compaction
     indices: [BlockId; N],
     data: [T; N],
 }
@@ -46,7 +45,6 @@ unsafe impl<T: SimpleVal, const N: usize> Pod for Page<T, N> {}
 impl<T: SimpleVal, const N: usize> Page<T, N> {
     fn new() -> Self {
         Page {
-            page_num: 0,
             indices: [BlockId::new(); N],
             data: [T::zeroed(); N],
         }
@@ -193,7 +191,7 @@ struct EvictInfo {
     offset: u16,
 }
 
-pub struct StructuredOram<T: SimpleVal, const N: usize> {
+pub struct FixedOram<T: SimpleVal, const N: usize> {
     tree: ORAMTree<Page<T, N>>,
     stash: Stash<T>,
     num_entry: usize,
@@ -209,10 +207,10 @@ struct SortEntry {
     offset: u32,
 }
 
-impl<T: SimpleVal, const N: usize> StructuredOram<T, N> {
+impl<T: SimpleVal, const N: usize> FixedOram<T, N> {
     pub fn new() -> Self {
         Self {
-            tree: ORAMTree::new(MIN_SEGMENT_SIZE * 2),
+            tree: ORAMTree::new(MIN_SEGMENT_SIZE * 16),
             stash: Stash::new(MIN_SEGMENT_SIZE),
             num_entry: 0,
             evict_infos_cache: vec![Vec::new(); 48],
@@ -397,11 +395,11 @@ impl<T: SimpleVal, const N: usize> StructuredOram<T, N> {
     }
 
     pub fn print_meta_state(&self) {
-        println!("StructuredOram meta state:");
-        // println!("StructuredOram pages count: {}", self.pages.capacity());
-        println!("StructuredOram stash kv count: {}", self.stash.num_kvs());
+        println!("FixedOram meta state:");
+        // println!("FixedOram pages count: {}", self.pages.capacity());
+        println!("FixedOram stash kv count: {}", self.stash.num_kvs());
         println!(
-            "StructuredOram stash size: {} MB",
+            "FixedOram stash size: {} MB",
             self.stash.num_bytes() as f64 / (1024 * 1024) as f64
         );
     }
@@ -441,10 +439,10 @@ mod tests {
     use super::*;
     use rand::random;
     #[test]
-    fn test_structured_oram_simple() {
+    fn test_fixed_oram_simple() {
         const BLOCK_PER_PAGE: usize =
             (BUFFER_SIZE / (std::mem::size_of::<(BlockId, u128)>())) as usize;
-        let mut page_oram = StructuredOram::<u128, BLOCK_PER_PAGE>::new();
+        let mut page_oram = FixedOram::<u128, BLOCK_PER_PAGE>::new();
         let mut entry = BlockId::new();
         entry.page_idx = 1;
         entry.uid = 2;
@@ -456,28 +454,12 @@ mod tests {
         assert_eq!(result, Some(value));
     }
 
-    // #[test]
-    // fn test_structured_oram_small() {
-    //     let round = 1000;
-    //     let mut ref_vec: Vec<(BlockId, u128)> = Vec::new();
-
-    //     for _ in 0..round {
-    //         let mut entry = BlockId::new();
-    //         entry.page_idx = random::<usize>();
-    //         entry.uid = random::<u64>();
-    //         let value = random::<u128>();
-    //         let new_page_id = random::<usize>();
-    //         let result = page_oram.write(&entry, &value, new_page_id);
-    //         assert_eq!(result, None);
-    //         entry.page_idx = new_page_id;
-    //         ref_vec.push((entry, value));
-    //     }
-    // }
-
     #[test]
-    fn test_structured_oram_medium() {
-        let mut page_oram = StructuredOram::<u128, 2>::new();
-        let round = 1000;
+    fn test_fixed_oram_medium() {
+        const BLOCK_PER_PAGE: usize =
+            (BUFFER_SIZE / (std::mem::size_of::<(BlockId, u128)>())) as usize;
+        let mut page_oram = FixedOram::<u128, BLOCK_PER_PAGE>::new();
+        let round = 100000;
         let mut ref_vec: Vec<(BlockId, u128)> = Vec::new();
 
         for _ in 0..round {

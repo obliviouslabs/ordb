@@ -1,16 +1,16 @@
 use crate::cuckoo::CuckooHashMap;
-use crate::pageoram::PageOram;
+use crate::flexoram::FlexOram;
 
 use std::fmt::Debug;
-pub struct PageOmap {
-    pageoram: PageOram,
+pub struct FlexOmap {
+    flexoram: FlexOram,
     pos_map: CuckooHashMap<usize>,
 }
 
-impl PageOmap {
+impl FlexOmap {
     pub fn new() -> Self {
         Self {
-            pageoram: PageOram::new(),
+            flexoram: FlexOram::new(),
             pos_map: CuckooHashMap::new(),
         }
     }
@@ -27,7 +27,7 @@ impl PageOmap {
         };
         hash_entry.set_val(old_page_id);
 
-        self.pageoram.write(&hash_entry, value, new_page_id)
+        self.flexoram.write(&hash_entry, value, new_page_id)
     }
 
     pub fn get<K: AsRef<[u8]> + Debug>(&mut self, key: K) -> Option<Vec<u8>> {
@@ -41,7 +41,7 @@ impl PageOmap {
             None => rand::random::<usize>(),
         };
         hash_entry.set_val(old_page_id);
-        self.pageoram.read(&hash_entry, new_page_id)
+        self.flexoram.read(&hash_entry, new_page_id)
     }
 
     pub fn size(&self) -> usize {
@@ -49,15 +49,15 @@ impl PageOmap {
     }
 
     pub fn print_meta_state(&self) {
-        println!("PageOmap meta state:");
+        println!("FlexOmap meta state:");
         self.pos_map.print_meta_state();
-        self.pageoram.print_meta_state();
+        self.flexoram.print_meta_state();
     }
 
     pub fn print_state(&self) {
-        println!("PageOmap state:");
+        println!("FlexOmap state:");
         self.pos_map.print_state();
-        // self.pageoram.print_state();
+        // self.flexoram.print_state();
     }
 }
 
@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn test_page_omap_simple() {
-        let mut page_omap = PageOmap::new();
+        let mut page_omap = FlexOmap::new();
         let key = "hello";
         let value = vec![1, 2, 3, 4];
         let result = page_omap.insert(key, &value);
@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn test_page_omap_dup() {
-        let mut page_omap = PageOmap::new();
+        let mut page_omap = FlexOmap::new();
         let key = "hello";
         let value = vec![1, 2, 3, 4];
         let result = page_omap.insert(key, &value);
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn evict_test() {
-        let mut map = PageOmap::new();
+        let mut map = FlexOmap::new();
         let map_size = 16;
         for i in 0..map_size {
             let key = i.to_string();
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn scale_and_dup_test() {
-        let mut map = PageOmap::new();
+        let mut map = FlexOmap::new();
         for i in 0..10000 {
             map.insert(&i.to_string(), &vec![i as u8; 43]);
         }
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn omap_fixed_size() {
-        let mut map = PageOmap::new();
+        let mut map = FlexOmap::new();
         let size = 1000000;
         for i in 0..size {
             map.insert(&i.to_string(), &vec![i as u8; 32]);
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn omap_large() {
-        let mut map = PageOmap::new();
+        let mut map = FlexOmap::new();
         let size = 1000000;
         for i in 0..size {
             map.insert(&i.to_string(), &vec![i as u8; i % 400]);
