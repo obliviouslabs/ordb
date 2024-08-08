@@ -59,7 +59,7 @@ impl<T: SimpleVal, const N: usize> Page<T, N> {
 
     fn read_and_remove_entry(&mut self, meta_data: &BlockId) -> Option<T> {
         for i in 0..N {
-            if self.indices[i] == *meta_data {
+            if self.indices[i] == *meta_data && self.indices[i] != BlockId::new() {
                 self.indices[i] = BlockId::new();
                 let ret = Some(self.data[i]);
                 return ret;
@@ -173,18 +173,6 @@ impl<T: SimpleVal> Stash<T> {
         self.stash[stash_idx].kvs.push((entry, value));
     }
 
-    pub fn concat(&mut self, idx: usize, entries: Vec<(BlockId, T)>) {
-        let stash_idx = idx % self.size;
-        self.split_entry(stash_idx); // potentially split the entry
-        self.num_kvs += entries.len();
-        if self.stash[stash_idx].kvs.is_empty() {
-            self.stash[stash_idx].kvs = entries;
-        } else {
-            // this should not happen in our usecase
-            self.stash[stash_idx].kvs.extend(entries);
-        }
-    }
-
     // pub fn avg_load(&self) -> f64 {
     //     self.num_kvs as f64 / self.size as f64
     // }
@@ -224,7 +212,7 @@ struct SortEntry {
 impl<T: SimpleVal, const N: usize> StructuredOram<T, N> {
     pub fn new() -> Self {
         Self {
-            tree: ORAMTree::new(MIN_SEGMENT_SIZE * 16),
+            tree: ORAMTree::new(MIN_SEGMENT_SIZE * 2),
             stash: Stash::new(MIN_SEGMENT_SIZE),
             num_entry: 0,
             evict_infos_cache: vec![Vec::new(); 48],
@@ -252,7 +240,7 @@ impl<T: SimpleVal, const N: usize> StructuredOram<T, N> {
             .collect();
         let mut result: Option<T> = None;
 
-        for (i, page) in path.iter_mut().rev().enumerate() {
+        for (i, page) in path.iter_mut().enumerate() {
             let entry = page.read_and_remove_entry(id);
             if entry.is_some() {
                 result = entry;
@@ -260,9 +248,9 @@ impl<T: SimpleVal, const N: usize> StructuredOram<T, N> {
             for j in 0..N {
                 let page_idx = page.indices[j].page_idx;
                 let deepest = calc_deepest(page_idx, path_idx, &layer_log_sizes);
-                if deepest >= num_layer as u8 {
+                if deepest > i as u8 {
                     self.empty_slots_cache[i].push(j as u16);
-                } else if deepest > i as u8 {
+                } else if deepest < i as u8 {
                     self.evict_infos_cache[deepest as usize].push(EvictInfo {
                         is_from_stash: false,
                         src: i as u8,
@@ -286,26 +274,26 @@ impl<T: SimpleVal, const N: usize> StructuredOram<T, N> {
             }
         }
 
-        let mut curr_evict_info_level = num_layer - 1;
+        let mut curr_evict_info_level = 0;
         let mut complete_flag = false;
-        for dst in (0..num_layer).rev() {
-            let (up_empty_slots, down_empty_slots) = self.empty_slots_cache.split_at_mut(dst);
-            for slot_offset in down_empty_slots[0].iter() {
+        for dst in 0..num_layer {
+            let (down_empty_slots, up_empty_slots) = self.empty_slots_cache.split_at_mut(dst + 1);
+            for slot_offset in down_empty_slots.last().unwrap().iter() {
                 // if curr_evict_info_level < dst {
                 //     // no available block to evict to dst
                 //     continue;
                 // }
                 while self.evict_infos_cache[curr_evict_info_level].is_empty() {
-                    if curr_evict_info_level == 0 {
+                    curr_evict_info_level += 1;
+                    if curr_evict_info_level == num_layer {
                         complete_flag = true;
                         break;
                     }
-                    curr_evict_info_level -= 1;
                 }
                 if complete_flag {
                     break;
                 }
-                if curr_evict_info_level < dst {
+                if curr_evict_info_level > dst {
                     // no available block to evict to dst
                     break;
                 }
@@ -317,7 +305,7 @@ impl<T: SimpleVal, const N: usize> StructuredOram<T, N> {
                     path[dst].insert(*slot_offset, &block_id, &value);
                 } else {
                     let src = evict_info.src as usize;
-                    if src >= dst {
+                    if src <= dst {
                         // since the blocks are read from the evict_infos_cache in a top-down order, we can clear the vector and break here
                         self.evict_infos_cache[curr_evict_info_level].clear();
                         break;
@@ -325,15 +313,15 @@ impl<T: SimpleVal, const N: usize> StructuredOram<T, N> {
                     let src_offset = evict_info.offset as usize;
                     let dst_offset = *slot_offset as usize;
 
-                    up_empty_slots[src].push(src_offset as u16); // we have new empty slots now
-                    let (up_path, down_path) = path.split_at_mut(dst);
+                    up_empty_slots[src - dst - 1].push(src_offset as u16); // we have new empty slots now
+                    let (down_path, up_path) = path.split_at_mut(src);
                     std::mem::swap(
-                        &mut down_path[0].indices[dst_offset],
-                        &mut up_path[src].indices[src_offset],
+                        &mut down_path[dst].indices[dst_offset],
+                        &mut up_path[0].indices[src_offset],
                     );
                     std::mem::swap(
-                        &mut down_path[0].data[dst_offset],
-                        &mut up_path[src].data[src_offset],
+                        &mut down_path[dst].data[dst_offset],
+                        &mut up_path[0].data[src_offset],
                     );
                 }
             }
@@ -392,7 +380,7 @@ impl<T: SimpleVal, const N: usize> StructuredOram<T, N> {
     }
 
     fn scale(&mut self) {
-        let target_branching_factor = BUFFER_SIZE as usize / (std::mem::size_of::<(T, BlockId)>());
+        let target_branching_factor = N;
         println!("Scaling to branching factor {}", target_branching_factor);
         self.tree.scale(target_branching_factor);
         let new_stash_size = self.tree.min_layer_size();
@@ -426,6 +414,26 @@ impl<T: SimpleVal, const N: usize> StructuredOram<T, N> {
             }
         }
         self.tree.print_state();
+    }
+    pub fn get_all(&self) -> Vec<(BlockId, T)> {
+        let mut ret = Vec::new();
+        for i in 0..self.stash.size {
+            let kvs = &self.stash.stash[i].kvs;
+            for (entry, value) in kvs.iter() {
+                ret.push((entry.clone(), value.clone()));
+            }
+        }
+        let tree_entries = self.tree.get_all();
+        for (idx, level_size, page) in tree_entries.iter() {
+            for i in 0..N {
+                let entry = page.indices[i];
+                let value = page.data[i];
+                if entry.page_idx % level_size == *idx && entry != BlockId::new() {
+                    ret.push((entry, value));
+                }
+            }
+        }
+        ret
     }
 }
 
@@ -468,8 +476,8 @@ mod tests {
 
     #[test]
     fn test_structured_oram_medium() {
-        let mut page_oram = StructuredOram::<u128, 4>::new();
-        let round = 200;
+        let mut page_oram = StructuredOram::<u128, 2>::new();
+        let round = 1000;
         let mut ref_vec: Vec<(BlockId, u128)> = Vec::new();
 
         for _ in 0..round {
@@ -484,12 +492,16 @@ mod tests {
             ref_vec.push((entry, value));
         }
         // page_oram.print_state();
+        let kvs = page_oram.get_all();
+        assert_eq!(kvs.len(), round);
 
         for _ in 0..10 {
             for (entry, value) in ref_vec.iter_mut() {
                 let new_page_id = random();
                 // println!("Read entry: {:?}", entry);
                 let result = page_oram.read(&entry, new_page_id);
+                // println!("State after read:");
+                // page_oram.print_state();
                 assert_eq!(result, Some(value.clone()));
                 entry.page_idx = new_page_id;
                 // page_oram.print_state();

@@ -102,6 +102,17 @@ impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
             }
         }
     }
+
+    pub fn get_all(&self) -> Vec<(usize, usize, T)> {
+        let mut all = Vec::new();
+        all.reserve(self.total_size);
+        for vec in self.tree.iter() {
+            for i in 0..vec.capacity() {
+                all.push((i, vec.capacity(), vec.get(i).unwrap()));
+            }
+        }
+        all
+    }
 }
 
 pub fn calc_deepest(self_idx: usize, other_idx: usize, layer_log_sizes: &Vec<u8>) -> u8 {

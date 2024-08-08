@@ -5,7 +5,7 @@ use std::mem;
 
 pub struct SegmentedVector<T: Clone + Pod + Zeroable> {
     segments: Vec<EncVector<T>>,
-    versions: Vec<u8>,
+    pub versions: Vec<u8>,
     size: usize,
     log_size: u8,
 }
