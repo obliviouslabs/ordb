@@ -1,22 +1,26 @@
 // const MAX_ENTRY: usize = 32;
-const PAGE_SIZE: usize = 4096;
+
 // const BUFFER_SIZE: usize = PAGE_SIZE
 //     - 2 * MAX_ENTRY * (std::mem::size_of::<HashEntry<usize>>() + std::mem::size_of::<u16>());
-const BUFFER_SIZE: usize = PAGE_SIZE - std::mem::size_of::<u16>();
 
 use std::vec;
 
 use crate::cuckoo::HashEntry;
-use crate::dynamictree::ORAMTree;
-use crate::segvec::MIN_SEGMENT_SIZE;
+use crate::dynamictree::{calc_deepest, ORAMTree};
+use crate::params::MIN_SEGMENT_SIZE;
+use crate::params::{KEY_SIZE, PAGE_SIZE};
+use bytemuck::{Pod, Zeroable};
 
-#[derive(Clone, Copy)]
+const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
 #[repr(C)]
+#[derive(Clone, Copy, Debug)]
 struct Page {
     page_num: usize, // the number of pages recorded, if it doesn't match the global page_num, perform a compaction
     filled_bytes: u16,
     buffer: [u8; BUFFER_SIZE],
 }
+unsafe impl Zeroable for Page {}
+unsafe impl Pod for Page {}
 impl Page {
     fn new() -> Self {
         Page {
@@ -36,7 +40,7 @@ impl Page {
         let meta_bytes = unsafe {
             std::slice::from_raw_parts(meta_data as *const HashEntry<usize> as *const u8, META_SIZE)
         };
-        let entry_size_bytes = (entry_size as u16).to_le_bytes();
+        let entry_size_bytes = (entry_size as u16).to_ne_bytes();
         let entry_bytes = entry.as_slice();
         let ptr = self.filled_bytes as usize;
         unsafe {
@@ -81,16 +85,6 @@ impl Page {
         true
     }
 
-    fn calcDeepest(self_idx: usize, other_idx: usize, layer_log_sizes: &Vec<u8>) -> u8 {
-        let tzcnt = (self_idx ^ other_idx).trailing_zeros() as u8;
-        for (i, log_layer_size) in layer_log_sizes.iter().enumerate() {
-            if tzcnt >= *log_layer_size {
-                return i as u8;
-            }
-        }
-        layer_log_sizes.len() as u8
-    }
-
     fn read_entry_and_retrieve_rest(
         &self,
         meta_data: &HashEntry<usize>,
@@ -106,7 +100,7 @@ impl Page {
         let mut ret: Option<Vec<u8>> = None;
         while ptr < self.filled_bytes as usize {
             // compare meta data with the bytes starting from page[ptr]
-            let entry_size = u16::from_le_bytes([
+            let entry_size = u16::from_ne_bytes([
                 self.buffer[ptr + META_SIZE],
                 self.buffer[ptr + META_SIZE + 1],
             ]) as usize;
@@ -127,7 +121,7 @@ impl Page {
                 let entry_meta =
                     unsafe { &*(entry_meta_bytes.as_ptr() as *const HashEntry<usize>) };
                 let self_idx = entry_meta.get_val();
-                let deepest = Self::calcDeepest(self_idx, meta_data.get_val(), layer_log_sizes);
+                let deepest = calc_deepest(self_idx, meta_data.get_val(), layer_log_sizes);
                 if deepest <= self_level as u8 {
                     // after fork, some entries may become invalid, i.e., cannot be placed in the current page
                     // we simply remove them
@@ -135,8 +129,7 @@ impl Page {
                         deepest,
                         src: self_level,
                         len: full_entry_size,
-                        offset: ptr as u16,
-                        src_stash_idx: 0,
+                        offset: ptr as u32,
                     });
                 }
             }
@@ -233,23 +226,31 @@ impl Stash {
         }
     }
 
-    pub fn get_and_remove(&mut self, idx: usize) -> Vec<Vec<(HashEntry<usize>, Vec<u8>)>> {
+    pub fn get_and_remove(&mut self, idx: usize) -> Vec<(HashEntry<usize>, Vec<u8>)> {
         let stash_idx = idx % self.size;
         self.split_entry(stash_idx); // potentially split the entry
-        let version = self.versions[stash_idx];
-        let num_stash_entry_rec = 1 << version;
-        let shrink_factor = num_stash_entry_rec / self.size;
-        // the stash may have shrinked, we need to merge the entries
-        let mut ret: Vec<Vec<(HashEntry<usize>, Vec<u8>)>> = vec![Vec::new(); shrink_factor];
-        for i in 0..shrink_factor {
-            let from_idx = i * self.size + stash_idx;
-            std::mem::swap(&mut self.stash[from_idx].kvs, &mut ret[i]);
-            self.versions[from_idx] = self.log_size;
-            for (_, value) in ret[i].iter() {
-                self.num_bytes -= value.len() + Self::STASH_ENTRY_META_SIZE;
-            }
-            self.num_kvs -= ret[i].len();
+        assert_eq!((1 << self.versions[stash_idx]), self.size);
+        let mut ret: Vec<(HashEntry<usize>, Vec<u8>)> = Vec::new();
+        std::mem::swap(&mut self.stash[stash_idx].kvs, &mut ret);
+        for (_, value) in ret.iter() {
+            self.num_bytes -= value.len() + Self::STASH_ENTRY_META_SIZE;
         }
+        self.num_kvs -= ret.len();
+
+        // let version = self.versions[stash_idx];
+        // let num_stash_entry_rec = 1 << version;
+        // let shrink_factor = num_stash_entry_rec / self.size;
+        // // the stash may have shrinked, we need to merge the entries
+        // let mut ret: Vec<Vec<(HashEntry<usize>, Vec<u8>)>> = vec![Vec::new(); shrink_factor];
+        // for i in 0..shrink_factor {
+        //     let from_idx = i * self.size + stash_idx;
+        //     std::mem::swap(&mut self.stash[from_idx].kvs, &mut ret[i]);
+        //     self.versions[from_idx] = self.log_size;
+        //     for (_, value) in ret[i].iter() {
+        //         self.num_bytes -= value.len() + Self::STASH_ENTRY_META_SIZE;
+        //     }
+        //     self.num_kvs -= ret[i].len();
+        // }
         ret
     }
 
@@ -277,9 +278,9 @@ impl Stash {
         }
     }
 
-    pub fn avg_load(&self) -> f64 {
-        self.num_kvs as f64 / self.size as f64
-    }
+    // pub fn avg_load(&self) -> f64 {
+    //     self.num_kvs as f64 / self.size as f64
+    // }
 
     pub fn num_kvs(&self) -> usize {
         self.num_kvs
@@ -301,8 +302,7 @@ struct SortEntry {
     deepest: u8,
     src: u8,
     len: u16,
-    offset: u16,
-    src_stash_idx: u16,
+    offset: u32,
 }
 
 impl PageOram {
@@ -337,33 +337,31 @@ impl PageOram {
                 result = page_result;
             }
         }
-        let stash_vecs = self.stash.get_and_remove(page_idx);
+        let stash_vec = self.stash.get_and_remove(page_idx);
         // if stash_vec.len() >= 65536 {
         //     // TODO
         //     println!("stash is catastrophically full");
         //     return None;
         // }
         const META_SIZE: usize = std::mem::size_of::<HashEntry<usize>>();
-        for (chunk_idx, stash_vec) in stash_vecs.iter().enumerate() {
-            for (i, (stash_entry, value)) in stash_vec.iter().enumerate() {
-                if stash_entry == entry {
-                    result = Some(value.clone());
-                } else {
-                    let deepest =
-                        Page::calcDeepest(stash_entry.get_val(), page_idx, &layer_log_sizes);
-                    if deepest >= num_layer as u8 {
-                        // after the stash forks, some entries may become invalid, i.e., cannot be placed in the current sub vector
-                        continue;
-                    }
-                    rest.push(SortEntry {
-                        deepest,
-                        src: num_layer as u8,
-                        len: (META_SIZE + 2 + value.len()) as u16,
-                        offset: i as u16,
-                        src_stash_idx: chunk_idx as u16,
-                    });
+        // for (chunk_idx, stash_vec) in stash_vecs.iter().enumerate() {
+        for (i, (stash_entry, value)) in stash_vec.iter().enumerate() {
+            if stash_entry == entry {
+                result = Some(value.clone());
+            } else {
+                let deepest = calc_deepest(stash_entry.get_val(), page_idx, &layer_log_sizes);
+                if deepest >= num_layer as u8 {
+                    // after the stash forks, some entries may become invalid, i.e., cannot be placed in the current sub vector
+                    continue;
                 }
+                rest.push(SortEntry {
+                    deepest,
+                    src: num_layer as u8,
+                    len: (META_SIZE + 2 + value.len()) as u16,
+                    offset: i as u32,
+                });
             }
+            // }
         }
 
         // now sort the rest of the entries by the deepest level
@@ -390,8 +388,7 @@ impl PageOram {
                 }
                 if entry.src == num_layer as u8 {
                     // copy from stash
-                    let (stash_entry, value) =
-                        &stash_vecs[entry.src_stash_idx as usize][entry.offset as usize];
+                    let (stash_entry, value) = &stash_vec[entry.offset as usize];
                     page.insert(stash_entry, value);
                 } else {
                     // copy from page
@@ -409,15 +406,14 @@ impl PageOram {
         new_stash_vec.reserve(allowed_set.len());
         for entry in allowed_set.iter() {
             if entry.src == num_layer as u8 {
-                let (stash_entry, value) =
-                    &stash_vecs[entry.src_stash_idx as usize][entry.offset as usize];
+                let (stash_entry, value) = &stash_vec[entry.offset as usize];
                 new_stash_vec.push((stash_entry.clone(), value.clone()));
             } else {
                 let src_page = path[entry.src as usize];
                 let meta_bytes = unsafe { src_page.buffer.as_ptr().offset(entry.offset as isize) };
                 let meta_data = unsafe { &*(meta_bytes as *const HashEntry<usize>) };
-                let value = src_page.buffer
-                    [entry.offset as usize + META_SIZE + 2..(entry.offset + entry.len) as usize]
+                let value = src_page.buffer[entry.offset as usize + META_SIZE + 2
+                    ..(entry.offset as usize + entry.len as usize)]
                     .to_vec();
                 new_stash_vec.push((meta_data.clone(), value));
             }

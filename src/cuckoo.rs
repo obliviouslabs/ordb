@@ -1,16 +1,17 @@
 use crate::segvec::SegmentedVector;
+use bytemuck::{Pod, Zeroable};
 use rand;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt::Debug;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct HashEntry<V: Clone + Copy + Eq + Debug> {
+pub struct HashEntry<V: Clone + Copy + Eq + Debug + Pod + Zeroable> {
     idx: [usize; 2],
     val: V,
 }
 
-impl<V: Clone + Copy + Eq + Debug> HashEntry<V> {
+impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> HashEntry<V> {
     pub fn new() -> Self {
         Self {
             idx: [0 as usize, 0 as usize],
@@ -56,11 +57,13 @@ impl<V: Clone + Copy + Eq + Debug> HashEntry<V> {
 const BKT_SIZE: usize = 2; // Example segment size
 
 #[derive(Clone, Copy)]
-struct HashBkt<V: Clone + Copy + Eq + Debug> {
+struct HashBkt<V: Clone + Copy + Eq + Debug + Pod + Zeroable> {
     entries: [HashEntry<V>; BKT_SIZE],
 }
+unsafe impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> Zeroable for HashBkt<V> {}
+unsafe impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> Pod for HashBkt<V> {}
 
-impl<V: Clone + Copy + Eq + Debug> HashBkt<V> {
+impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> HashBkt<V> {
     pub fn new() -> Self {
         Self {
             entries: [HashEntry {
@@ -71,14 +74,14 @@ impl<V: Clone + Copy + Eq + Debug> HashBkt<V> {
     }
 }
 
-pub struct CuckooHashMap<V: Clone + Copy + Eq + Debug> {
+pub struct CuckooHashMap<V: Clone + Copy + Eq + Debug + Pod + Zeroable> {
     tables: [SegmentedVector<HashBkt<V>>; 2],
     size: usize,
     full_bkt_stash: HashMap<[usize; 2], V>,
     salt: [u8; 32],
 }
 
-impl<V: Clone + Copy + Eq + Debug> CuckooHashMap<V> {
+impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> CuckooHashMap<V> {
     pub fn new() -> Self {
         Self {
             tables: [SegmentedVector::new(), SegmentedVector::new()],

@@ -130,6 +130,21 @@ mod tests {
     }
 
     #[test]
+    fn omap_fixed_size() {
+        let mut map = PageOmap::new();
+        let size = 1000000;
+        for i in 0..size {
+            map.insert(&i.to_string(), &vec![i as u8; 32]);
+        }
+        let read_round = 10000000;
+        for r in 0..read_round {
+            let i = (r * 929) % size;
+            assert_eq!(map.get(&i.to_string()), Some(vec![i as u8; 32]));
+        }
+        assert_eq!(size, map.size());
+    }
+
+    #[test]
     fn omap_large() {
         let mut map = PageOmap::new();
         let size = 1000000;

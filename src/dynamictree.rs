@@ -1,13 +1,14 @@
 use crate::segvec::SegmentedVector;
-
-pub struct ORAMTree<T: Clone + Copy> {
+use bytemuck::{Pod, Zeroable};
+use std::fmt::Debug;
+pub struct ORAMTree<T: Clone + Copy + Pod + Zeroable + Debug> {
     tree: Vec<SegmentedVector<T>>,
     max_branching_factor: usize,
     top_vec_max_size: usize,
     total_size: usize,
 }
 
-impl<T: Clone + Copy> ORAMTree<T> {
+impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
     pub fn new(top_vec_max_size: usize) -> Self {
         let mut tree = Vec::new();
         tree.push(SegmentedVector::new());
@@ -20,7 +21,13 @@ impl<T: Clone + Copy> ORAMTree<T> {
         }
     }
 
-    pub fn read_path(&self, index: usize) -> (Vec<&T>, Vec<usize>) {
+    fn read_node(&self, index: usize, level: usize) -> T {
+        self.tree[level]
+            .get(index % self.tree[level].capacity())
+            .unwrap()
+    }
+
+    pub fn read_path(&self, index: usize) -> (Vec<T>, Vec<usize>) {
         let mut path = Vec::new();
         let mut capacities = Vec::new();
         path.reserve(self.tree.len());
@@ -44,7 +51,10 @@ impl<T: Clone + Copy> ORAMTree<T> {
         }
     }
 
-    pub fn scale(&mut self, target_branching_factor: usize) {
+    pub fn scale(&mut self, mut target_branching_factor: usize) {
+        if target_branching_factor < 2 {
+            target_branching_factor = 2;
+        }
         let init_min_layer_size = self.min_layer_size();
         let mut below_layer_size = self.tree[0].capacity() * (target_branching_factor + 1);
         // if the current branching factor is too large, don't scale the bottom layer. Instead, first scale the middle layers
@@ -83,4 +93,23 @@ impl<T: Clone + Copy> ORAMTree<T> {
     pub fn total_size(&self) -> usize {
         self.total_size
     }
+
+    pub fn print_state(&self) {
+        for (i, vec) in self.tree.iter().enumerate() {
+            println!("Layer {}:", i);
+            for j in 0..vec.capacity() {
+                println!("{}: {:?}", j, vec.get(j).unwrap());
+            }
+        }
+    }
+}
+
+pub fn calc_deepest(self_idx: usize, other_idx: usize, layer_log_sizes: &Vec<u8>) -> u8 {
+    let tzcnt = (self_idx ^ other_idx).trailing_zeros() as u8;
+    for (i, log_layer_size) in layer_log_sizes.iter().enumerate() {
+        if tzcnt >= *log_layer_size {
+            return i as u8;
+        }
+    }
+    layer_log_sizes.len() as u8
 }
