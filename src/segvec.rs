@@ -1,19 +1,19 @@
-use crate::encvec::EncVector;
+use crate::encvec::EncVec;
 use crate::params::MIN_SEGMENT_SIZE;
 use bytemuck::{Pod, Zeroable};
 use std::mem;
 
-pub struct SegmentedVector<T: Clone + Pod + Zeroable> {
-    segments: Vec<EncVector<T>>,
+pub struct SegmentedVec<T: Clone + Pod + Zeroable> {
+    segments: Vec<EncVec<T>>,
     pub versions: Vec<u8>,
     size: usize,
     log_size: u8,
 }
 
-impl<T: Clone + Pod + Zeroable> SegmentedVector<T> {
+impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
     pub fn new() -> Self {
-        println!("Creating new SegmentedVector");
-        let initial_segment = EncVector::new(MIN_SEGMENT_SIZE, &[0; 32]);
+        println!("Creating new SegmentedVec");
+        let initial_segment = EncVec::new(MIN_SEGMENT_SIZE, &[0; 32]);
         let init_version = MIN_SEGMENT_SIZE.trailing_zeros() as u8;
         Self {
             segments: vec![initial_segment],
@@ -24,7 +24,7 @@ impl<T: Clone + Pod + Zeroable> SegmentedVector<T> {
     }
 
     fn double_size(&mut self) {
-        let new_segment = EncVector::new(self.size, &[0; 32]);
+        let new_segment = EncVec::new(self.size, &[0; 32]);
         self.segments.push(new_segment);
         self.size *= 2;
         self.log_size += 1;
@@ -128,11 +128,11 @@ impl<T: Clone + Pod + Zeroable> SegmentedVector<T> {
 }
 
 mod tests {
-    use crate::segvec::SegmentedVector;
+    use crate::segvec::SegmentedVec;
 
     #[test]
     fn it_works() {
-        let mut vec = SegmentedVector::<u128>::new();
+        let mut vec = SegmentedVec::<u128>::new();
         vec.double_size_and_fork_self();
         vec.double_size_and_fork_self();
         vec.set(0, &42);

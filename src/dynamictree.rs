@@ -1,8 +1,8 @@
-use crate::segvec::SegmentedVector;
+use crate::segvec::SegmentedVec;
 use bytemuck::{Pod, Zeroable};
 use std::fmt::Debug;
 pub struct ORAMTree<T: Clone + Copy + Pod + Zeroable + Debug> {
-    tree: Vec<SegmentedVector<T>>,
+    tree: Vec<SegmentedVec<T>>,
     max_branching_factor: usize,
     top_vec_max_size: usize,
     total_size: usize,
@@ -11,7 +11,7 @@ pub struct ORAMTree<T: Clone + Copy + Pod + Zeroable + Debug> {
 impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
     pub fn new(top_vec_max_size: usize) -> Self {
         let mut tree = Vec::new();
-        tree.push(SegmentedVector::new());
+        tree.push(SegmentedVec::new());
         let total_size = tree[0].capacity();
         Self {
             tree,
@@ -76,7 +76,7 @@ impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
         }
         if below_layer_size > self.top_vec_max_size {
             // add a new layer
-            let mut new_top_vec = SegmentedVector::new();
+            let mut new_top_vec = SegmentedVec::new();
             // while new_top_vec.capacity() * target_branching_factor < below_layer_size {
             while new_top_vec.capacity() < init_min_layer_size {
                 new_top_vec.double_size_and_fork_self();

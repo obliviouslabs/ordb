@@ -12,17 +12,18 @@ use crate::params::MIN_SEGMENT_SIZE;
 use crate::params::{KEY_SIZE, PAGE_SIZE};
 use bincode::de;
 use bytemuck::{Pod, Zeroable};
+use serde::de::value;
 
 const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BlockId {
-    page_idx: usize,
-    uid: u64,
+    pub page_idx: usize,
+    pub uid: usize,
 }
 
 impl BlockId {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             page_idx: 0,
             uid: 0,
@@ -171,9 +172,9 @@ impl<T: SimpleVal> Stash<T> {
         self.stash[stash_idx].kvs.push((entry, value));
     }
 
-    // pub fn avg_load(&self) -> f64 {
-    //     self.num_kvs as f64 / self.size as f64
-    // }
+    pub fn size(&self) -> usize {
+        self.size
+    }
 
     pub fn num_kvs(&self) -> usize {
         self.num_kvs
@@ -191,7 +192,7 @@ struct EvictInfo {
     offset: u16,
 }
 
-pub struct FixedOram<T: SimpleVal, const N: usize> {
+pub struct FixOram<T: SimpleVal, const N: usize> {
     tree: ORAMTree<Page<T, N>>,
     stash: Stash<T>,
     num_entry: usize,
@@ -207,7 +208,7 @@ struct SortEntry {
     offset: u32,
 }
 
-impl<T: SimpleVal, const N: usize> FixedOram<T, N> {
+impl<T: SimpleVal, const N: usize> FixOram<T, N> {
     pub fn new() -> Self {
         Self {
             tree: ORAMTree::new(MIN_SEGMENT_SIZE * 16),
@@ -223,12 +224,10 @@ impl<T: SimpleVal, const N: usize> FixedOram<T, N> {
         self.num_entry * (std::mem::size_of::<(BlockId, T)>()) + self.stash.num_bytes()
     }
 
-    pub fn read_or_write(
-        &mut self,
-        id: &BlockId,
-        value_to_write: Option<&T>,
-        new_page_id: usize,
-    ) -> Option<T> {
+    pub fn update<F>(&mut self, id: &BlockId, update_func: F, new_page_id: usize)
+    where
+        F: FnOnce(Option<T>) -> Option<T>,
+    {
         let path_idx = id.page_idx;
         let (mut path, layer_sizes) = self.tree.read_path(path_idx);
         let num_layer = layer_sizes.len();
@@ -349,21 +348,23 @@ impl<T: SimpleVal, const N: usize> FixedOram<T, N> {
         }
         self.stash_remain_cache.clear();
         self.tree.write_path_move(path_idx, path);
-        if value_to_write.is_some() || result.is_some() {
-            if result.is_none() {
-                self.num_entry += 1;
-            }
+        let found_flag = result.is_some();
+        result = update_func(result);
+        let remain_flag = result.is_some();
+        if remain_flag {
+            self.num_entry += 1;
+        }
+        if found_flag {
+            self.num_entry -= 1;
+        }
+        if result.is_some() {
             let new_id = BlockId {
                 page_idx: new_page_id,
                 uid: id.uid,
             };
-            if value_to_write.is_some() {
-                self.stash
-                    .insert(new_page_id, new_id, value_to_write.unwrap().clone());
-            } else {
-                self.stash
-                    .insert(new_page_id, new_id, result.unwrap().clone());
-            }
+
+            self.stash
+                .insert(new_page_id, new_id, result.unwrap().clone());
         }
         let load_factor = self.num_bytes() as f64 / (self.tree.total_size() * BUFFER_SIZE) as f64;
         if load_factor > 0.7 {
@@ -374,7 +375,6 @@ impl<T: SimpleVal, const N: usize> FixedOram<T, N> {
             );
             self.scale();
         }
-        result
     }
 
     fn scale(&mut self) {
@@ -387,19 +387,26 @@ impl<T: SimpleVal, const N: usize> FixedOram<T, N> {
     }
 
     pub fn read(&mut self, id: &BlockId, new_page_id: usize) -> Option<T> {
-        self.read_or_write(id, None, new_page_id)
+        let mut ret = None;
+        let dummy_func = |x: Option<T>| {
+            ret = x;
+            x
+        };
+        self.update(id, dummy_func, new_page_id);
+        ret
     }
 
-    pub fn write(&mut self, id: &BlockId, value: &T, new_page_id: usize) -> Option<T> {
-        self.read_or_write(id, Some(value), new_page_id)
+    pub fn write(&mut self, id: &BlockId, value: &T, new_page_id: usize) {
+        let overwrite_func = |x| Some(*value);
+        self.update(id, overwrite_func, new_page_id);
     }
 
     pub fn print_meta_state(&self) {
-        println!("FixedOram meta state:");
-        // println!("FixedOram pages count: {}", self.pages.capacity());
-        println!("FixedOram stash kv count: {}", self.stash.num_kvs());
+        println!("FixOram meta state:");
+        // println!("FixOram pages count: {}", self.pages.capacity());
+        println!("FixOram stash kv count: {}", self.stash.num_kvs());
         println!(
-            "FixedOram stash size: {} MB",
+            "FixOram stash size: {} MB",
             self.stash.num_bytes() as f64 / (1024 * 1024) as f64
         );
     }
@@ -439,37 +446,35 @@ mod tests {
     use super::*;
     use rand::random;
     #[test]
-    fn test_fixed_oram_simple() {
+    fn test_fix_oram_simple() {
         const BLOCK_PER_PAGE: usize =
             (BUFFER_SIZE / (std::mem::size_of::<(BlockId, u128)>())) as usize;
-        let mut page_oram = FixedOram::<u128, BLOCK_PER_PAGE>::new();
+        let mut page_oram = FixOram::<u128, BLOCK_PER_PAGE>::new();
         let mut entry = BlockId::new();
         entry.page_idx = 1;
         entry.uid = 2;
         let value = 123u128;
         let new_page_id = 1;
-        let result = page_oram.write(&entry, &value, new_page_id);
-        assert_eq!(result, None);
+        page_oram.write(&entry, &value, new_page_id);
         let result = page_oram.read(&entry, new_page_id);
         assert_eq!(result, Some(value));
     }
 
     #[test]
-    fn test_fixed_oram_medium() {
+    fn test_fix_oram_medium() {
         const BLOCK_PER_PAGE: usize =
             (BUFFER_SIZE / (std::mem::size_of::<(BlockId, u128)>())) as usize;
-        let mut page_oram = FixedOram::<u128, BLOCK_PER_PAGE>::new();
+        let mut page_oram = FixOram::<u128, BLOCK_PER_PAGE>::new();
         let round = 100000;
         let mut ref_vec: Vec<(BlockId, u128)> = Vec::new();
 
         for _ in 0..round {
             let mut entry = BlockId::new();
             entry.page_idx = random::<usize>();
-            entry.uid = random::<u64>();
+            entry.uid = random::<usize>();
             let value = random::<u128>();
             let new_page_id = random::<usize>();
-            let result = page_oram.write(&entry, &value, new_page_id);
-            assert_eq!(result, None);
+            page_oram.write(&entry, &value, new_page_id);
             entry.page_idx = new_page_id;
             ref_vec.push((entry, value));
         }

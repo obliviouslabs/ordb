@@ -9,7 +9,7 @@ use rand::RngCore;
 struct EncPage {
     data: [u8; PAGE_SIZE],
 }
-pub struct EncVector<T: Clone + Pod + Zeroable> {
+pub struct EncVec<T: Clone + Pod + Zeroable> {
     pages: Vec<EncPage>,
     key: Key<Aes256Gcm>,
     phantom: std::marker::PhantomData<T>,
@@ -23,7 +23,7 @@ impl EncPage {
     }
 }
 
-impl<T: Clone + Pod + Zeroable> EncVector<T> {
+impl<T: Clone + Pod + Zeroable> EncVec<T> {
     pub fn new(size: usize, raw_key: &[u8; KEY_SIZE]) -> Self {
         let key = (*raw_key).into();
         Self {
@@ -78,11 +78,11 @@ impl<T: Clone + Pod + Zeroable> EncVector<T> {
 }
 
 mod tests {
-    use crate::encvec::EncVector;
+    use crate::encvec::EncVec;
 
     #[test]
     fn it_works() {
-        let mut vec = EncVector::<u128>::new(1024, &[0u8; 32]);
+        let mut vec = EncVec::<u128>::new(1024, &[0u8; 32]);
         vec.put(0, 42);
         assert_eq!(vec.get(0), Some(42));
     }

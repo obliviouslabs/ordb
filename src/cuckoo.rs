@@ -1,4 +1,4 @@
-use crate::segvec::SegmentedVector;
+use crate::segvec::SegmentedVec;
 use bytemuck::{Pod, Zeroable};
 use rand;
 use serde::{Deserialize, Serialize};
@@ -75,7 +75,7 @@ impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> HashBkt<V> {
 }
 
 pub struct CuckooHashMap<V: Clone + Copy + Eq + Debug + Pod + Zeroable> {
-    tables: [SegmentedVector<HashBkt<V>>; 2],
+    tables: [SegmentedVec<HashBkt<V>>; 2],
     size: usize,
     full_bkt_stash: HashMap<[usize; 2], V>,
     salt: [u8; 32],
@@ -84,7 +84,7 @@ pub struct CuckooHashMap<V: Clone + Copy + Eq + Debug + Pod + Zeroable> {
 impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> CuckooHashMap<V> {
     pub fn new() -> Self {
         Self {
-            tables: [SegmentedVector::new(), SegmentedVector::new()],
+            tables: [SegmentedVec::new(), SegmentedVec::new()],
             size: 0,
             full_bkt_stash: HashMap::new(),
             salt: rand::random::<[u8; 32]>(), // change to secure random

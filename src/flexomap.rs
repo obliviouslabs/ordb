@@ -130,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn omap_fixed_size() {
+    fn omap_fix_size() {
         let mut map = FlexOmap::new();
         let size = 1000000;
         for i in 0..size {
