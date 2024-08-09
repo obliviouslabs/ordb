@@ -27,7 +27,8 @@ impl FlexOmap {
         };
         hash_entry.set_val(old_page_id);
 
-        self.flexoram.write(&hash_entry, value, new_page_id)
+        self.flexoram
+            .read_and_write(&hash_entry, value, new_page_id)
     }
 
     pub fn get<K: AsRef<[u8]> + Debug>(&mut self, key: K) -> Option<Vec<u8>> {
@@ -65,29 +66,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_page_omap_simple() {
-        let mut page_omap = FlexOmap::new();
+    fn test_flex_omap_simple() {
+        let mut flex_omap = FlexOmap::new();
         let key = "hello";
         let value = vec![1, 2, 3, 4];
-        let result = page_omap.insert(key, &value);
+        let result = flex_omap.insert(key, &value);
         assert_eq!(result, None);
-        let result = page_omap.get(key);
+        let result = flex_omap.get(key);
         assert_eq!(result, Some(value));
     }
 
     #[test]
-    fn test_page_omap_dup() {
-        let mut page_omap = FlexOmap::new();
+    fn test_flex_omap_dup() {
+        let mut flex_omap = FlexOmap::new();
         let key = "hello";
         let value = vec![1, 2, 3, 4];
-        let result = page_omap.insert(key, &value);
+        let result = flex_omap.insert(key, &value);
         assert_eq!(result, None);
-        let result = page_omap.get(key);
+        let result = flex_omap.get(key);
         assert_eq!(result, Some(value));
         let value = vec![5, 6, 7, 8, 9];
-        let result = page_omap.insert(key, &value);
+        let result = flex_omap.insert(key, &value);
         assert_eq!(result, Some(vec![1, 2, 3, 4]));
-        let result = page_omap.get(key);
+        let result = flex_omap.get(key);
         assert_eq!(result, Some(value));
     }
 

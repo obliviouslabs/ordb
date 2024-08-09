@@ -298,12 +298,10 @@ impl FlexOram {
         }
     }
 
-    pub fn read_or_write(
-        &mut self,
-        entry: &HashEntry<usize>,
-        value_to_write: Option<&Vec<u8>>,
-        new_page_id: usize,
-    ) -> Option<Vec<u8>> {
+    pub fn update<F>(&mut self, entry: &HashEntry<usize>, update_func: F, new_page_id: usize)
+    where
+        F: FnOnce(Option<Vec<u8>>) -> Option<Vec<u8>>,
+    {
         let page_idx = entry.get_val();
         let (path, layer_sizes) = self.tree.read_path(page_idx);
         let num_layer = layer_sizes.len();
@@ -405,25 +403,18 @@ impl FlexOram {
 
         // write back path
         self.tree.write_path_move(page_idx, new_path);
+        if result.is_some() {
+            self.num_entry -= 1;
+            self.num_bytes -= result.as_ref().unwrap().len() + META_SIZE;
+        }
+        let result = update_func(result);
 
-        if value_to_write.is_some() || result.is_some() {
-            if result.is_none() {
-                self.num_entry += 1;
-                self.num_bytes += value_to_write.as_ref().unwrap().len() + META_SIZE;
-            } else if value_to_write.is_some() {
-                self.num_bytes +=
-                    value_to_write.as_ref().unwrap().len() - result.as_ref().unwrap().len();
-            }
-
+        if let Some(result_unwrap) = result {
+            self.num_entry += 1;
+            self.num_bytes += result_unwrap.len() + META_SIZE;
             let mut new_entry = entry.clone();
             new_entry.set_val(new_page_id);
-            let value_to_write_clone = if value_to_write.is_some() {
-                value_to_write.unwrap().clone()
-            } else {
-                result.clone().unwrap()
-            };
-            self.stash
-                .insert(new_page_id, new_entry, value_to_write_clone);
+            self.stash.insert(new_page_id, new_entry, result_unwrap);
         }
         let load_factor = self.num_bytes as f64 / (self.tree.total_size() * BUFFER_SIZE) as f64;
         if load_factor > 0.5 {
@@ -434,7 +425,6 @@ impl FlexOram {
             );
             self.scale();
         }
-        result
     }
 
     fn scale(&mut self) {
@@ -447,16 +437,33 @@ impl FlexOram {
     }
 
     pub fn read(&mut self, entry: &HashEntry<usize>, new_page_id: usize) -> Option<Vec<u8>> {
-        self.read_or_write(entry, None, new_page_id)
+        let mut ret = None;
+        let dummy_func = |x: Option<Vec<u8>>| {
+            ret = x.clone();
+            x
+        };
+        self.update(entry, dummy_func, new_page_id);
+        ret
     }
 
-    pub fn write(
+    pub fn write(&mut self, entry: &HashEntry<usize>, value: &Vec<u8>, new_page_id: usize) {
+        let overwrite_func = |_| Some(value.clone());
+        self.update(entry, overwrite_func, new_page_id);
+    }
+
+    pub fn read_and_write(
         &mut self,
         entry: &HashEntry<usize>,
         value: &Vec<u8>,
         new_page_id: usize,
     ) -> Option<Vec<u8>> {
-        self.read_or_write(entry, Some(value), new_page_id)
+        let mut ret = None;
+        let overwrite_func = |x: Option<Vec<u8>>| {
+            ret = x;
+            Some(value.clone())
+        };
+        self.update(entry, overwrite_func, new_page_id);
+        ret
     }
 
     pub fn print_meta_state(&self) {
@@ -501,22 +508,22 @@ mod tests {
     use super::*;
     use rand::random;
     #[test]
-    fn test_page_oram_simple() {
-        let mut page_oram = FlexOram::new();
+    fn test_flex_oram_simple() {
+        let mut flex_oram = FlexOram::new();
         let mut entry = HashEntry::new();
         entry.set_idx([1, 2]);
         entry.set_val(1);
         let value = vec![1, 2, 3, 4];
         let new_page_id = 1;
-        let result = page_oram.write(&entry, &value, new_page_id);
-        assert_eq!(result, None);
-        let result = page_oram.read(&entry, new_page_id);
+        flex_oram.write(&entry, &value, new_page_id);
+
+        let result = flex_oram.read(&entry, new_page_id);
         assert_eq!(result, Some(value));
     }
 
     #[test]
-    fn test_page_oram_medium() {
-        let mut page_oram = FlexOram::new();
+    fn test_flex_oram_medium() {
+        let mut flex_oram = FlexOram::new();
         let round = 100000;
         let mut ref_vec: Vec<(HashEntry<usize>, Vec<u8>)> = Vec::new();
 
@@ -526,8 +533,7 @@ mod tests {
             let val_len = random::<usize>() % 32;
             let value: Vec<u8> = (0..val_len).map(|_| random::<u8>()).collect();
             let new_page_id = random::<usize>();
-            let result = page_oram.write(&entry, &value, new_page_id);
-            assert_eq!(result, None);
+            flex_oram.write(&entry, &value, new_page_id);
             entry.set_val(new_page_id);
             ref_vec.push((entry, value));
         }
@@ -535,11 +541,11 @@ mod tests {
         for _ in 0..10 {
             for (entry, value) in ref_vec.iter_mut() {
                 let new_page_id = random();
-                let result = page_oram.read(&entry, new_page_id);
+                let result = flex_oram.read(&entry, new_page_id);
                 assert_eq!(result, Some(value.clone()));
                 entry.set_val(new_page_id)
             }
         }
-        page_oram.print_meta_state();
+        flex_oram.print_meta_state();
     }
 }

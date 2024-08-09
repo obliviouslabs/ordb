@@ -397,7 +397,7 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
     }
 
     pub fn write(&mut self, id: &BlockId, value: &T, new_page_id: usize) {
-        let overwrite_func = |x| Some(*value);
+        let overwrite_func = |_| Some(*value);
         self.update(id, overwrite_func, new_page_id);
     }
 
