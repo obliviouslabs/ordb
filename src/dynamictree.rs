@@ -56,33 +56,32 @@ impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
             target_branching_factor = 2;
         }
         let init_min_layer_size = self.min_layer_size();
-        let mut below_layer_size = self.tree[0].capacity() * (target_branching_factor + 1);
-        // if the current branching factor is too large, don't scale the bottom layer. Instead, first scale the middle layers
-        if self.max_branching_factor > target_branching_factor {
-            below_layer_size = self.tree[0].capacity();
-        }
-        // scale starting from the bottom layer
-        self.total_size = 0;
-        for vec in self.tree.iter_mut() {
-            if vec.capacity() * target_branching_factor < below_layer_size {
-                vec.double_size_and_fork_self();
-            } else if vec.capacity() * self.max_branching_factor < below_layer_size {
-                // max branching factor could potentially increase if the layer below is scaled
-                // but the current layer is not
-                self.max_branching_factor = below_layer_size / vec.capacity();
+        let mut min_branching_factor = usize::max_value();
+        let mut min_branching_factor_layer = 0;
+        for i in 0..self.tree.len() - 1 {
+            let branching_factor = self.tree[i].capacity() / self.tree[i + 1].capacity();
+            if branching_factor < min_branching_factor {
+                min_branching_factor = branching_factor;
+                min_branching_factor_layer = i;
             }
-            below_layer_size = vec.capacity();
-            self.total_size += below_layer_size;
         }
-        if below_layer_size > self.top_vec_max_size {
-            // add a new layer
-            let mut new_top_vec = SegmentedVec::new();
-            // while new_top_vec.capacity() * target_branching_factor < below_layer_size {
-            while new_top_vec.capacity() < init_min_layer_size {
-                new_top_vec.double_size_and_fork_self();
+        if min_branching_factor * 2 <= target_branching_factor {
+            // scale the layer with the smallest branching factor
+            self.total_size += self.tree[min_branching_factor_layer].capacity();
+            self.tree[min_branching_factor_layer].double_size_and_fork_self();
+        } else {
+            // scale the top layer
+            self.total_size += self.tree.last().unwrap().capacity();
+            self.tree.last_mut().unwrap().double_size_and_fork_self();
+            if self.tree.last().unwrap().capacity() > self.top_vec_max_size {
+                // add a new layer
+                let mut new_top_vec = SegmentedVec::new();
+                while new_top_vec.capacity() < init_min_layer_size {
+                    new_top_vec.double_size_and_fork_self();
+                }
+                self.total_size += new_top_vec.capacity();
+                self.tree.push(new_top_vec);
             }
-            self.total_size += new_top_vec.capacity();
-            self.tree.push(new_top_vec);
         }
     }
 
