@@ -22,3 +22,7 @@ impl RandGen {
         self.rng.gen::<T>()
     }
 }
+
+pub fn get_low_bits(value: usize, num_bits: u8) -> usize {
+    value & ((1 << num_bits) - 1)
+}

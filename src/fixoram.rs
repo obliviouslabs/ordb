@@ -226,7 +226,7 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
 
     pub fn update<F>(&mut self, id: &BlockId, update_func: F, new_page_id: usize)
     where
-        F: FnOnce(Option<T>) -> Option<T>,
+        F: FnOnce(Option<T>, usize) -> (Option<T>, usize),
     {
         let path_idx = id.page_idx;
         let (mut path, layer_sizes) = self.tree.read_path(path_idx);
@@ -349,7 +349,7 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
         self.stash_remain_cache.clear();
         self.tree.write_path_move(path_idx, path);
         let found_flag = result.is_some();
-        result = update_func(result);
+        let (result, new_uid) = update_func(result, id.uid);
         let remain_flag = result.is_some();
         if remain_flag {
             self.num_entry += 1;
@@ -360,7 +360,7 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
         if result.is_some() {
             let new_id = BlockId {
                 page_idx: new_page_id,
-                uid: id.uid,
+                uid: new_uid,
             };
 
             self.stash
@@ -388,16 +388,16 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
 
     pub fn read(&mut self, id: &BlockId, new_page_id: usize) -> Option<T> {
         let mut ret = None;
-        let dummy_func = |x: Option<T>| {
+        let dummy_func = |x: Option<T>, uid| {
             ret = x;
-            x
+            (x, uid)
         };
         self.update(id, dummy_func, new_page_id);
         ret
     }
 
     pub fn write(&mut self, id: &BlockId, value: &T, new_page_id: usize) {
-        let overwrite_func = |_| Some(*value);
+        let overwrite_func = |_, uid| (Some(*value), uid);
         self.update(id, overwrite_func, new_page_id);
     }
 
