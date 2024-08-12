@@ -1,21 +1,22 @@
-use crate::segvec::SegmentedVec;
+use crate::linearoram::LinearOram;
+use crate::recoram::RecOram;
+use crate::utils::SimpleVal;
 use bytemuck::{Pod, Zeroable};
 use rand;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt::Debug;
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct HashEntry<V: Clone + Copy + Eq + Debug + Pod + Zeroable> {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HashEntry<V: SimpleVal> {
     idx: [usize; 2],
     val: V,
 }
 
-impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> HashEntry<V> {
+impl<V: SimpleVal> HashEntry<V> {
     pub fn new() -> Self {
         Self {
             idx: [0 as usize, 0 as usize],
-            val: unsafe { std::mem::zeroed() },
+            val: V::zeroed(),
         }
     }
 
@@ -29,7 +30,12 @@ impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> HashEntry<V> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.val == unsafe { std::mem::zeroed() }
+        self.val == V::zeroed()
+    }
+
+    pub fn delete(&mut self) {
+        self.idx = [0 as usize, 0 as usize];
+        self.val = V::zeroed();
     }
 
     pub fn eq(&self, other: &Self) -> bool {
@@ -54,16 +60,14 @@ impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> HashEntry<V> {
     }
 }
 
-const BKT_SIZE: usize = 2; // Example segment size
-
-#[derive(Clone, Copy)]
-struct HashBkt<V: Clone + Copy + Eq + Debug + Pod + Zeroable> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HashBkt<V: SimpleVal, const BKT_SIZE: usize> {
     entries: [HashEntry<V>; BKT_SIZE],
 }
-unsafe impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> Zeroable for HashBkt<V> {}
-unsafe impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> Pod for HashBkt<V> {}
+unsafe impl<V: SimpleVal, const BKT_SIZE: usize> Zeroable for HashBkt<V, BKT_SIZE> {}
+unsafe impl<V: SimpleVal, const BKT_SIZE: usize> Pod for HashBkt<V, BKT_SIZE> {}
 
-impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> HashBkt<V> {
+impl<V: SimpleVal, const BKT_SIZE: usize> HashBkt<V, BKT_SIZE> {
     pub fn new() -> Self {
         Self {
             entries: [HashEntry {
@@ -74,17 +78,22 @@ impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> HashBkt<V> {
     }
 }
 
-pub struct CuckooHashMap<V: Clone + Copy + Eq + Debug + Pod + Zeroable> {
-    tables: [SegmentedVec<HashBkt<V>>; 2],
+pub struct CuckooHashMap<V: SimpleVal, const BKT_SIZE: usize, const BKT_PER_PAGE: usize> {
+    tables: [RecOram<HashBkt<V, BKT_SIZE>, BKT_PER_PAGE>; 2],
     size: usize,
     full_bkt_stash: HashMap<[usize; 2], V>,
     salt: [u8; 32],
 }
 
-impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> CuckooHashMap<V> {
+impl<V: SimpleVal, const BKT_SIZE: usize, const BKT_PER_PAGE: usize>
+    CuckooHashMap<V, BKT_SIZE, BKT_PER_PAGE>
+{
     pub fn new() -> Self {
         Self {
-            tables: [SegmentedVec::new(), SegmentedVec::new()],
+            tables: [
+                RecOram::<HashBkt<V, BKT_SIZE>, BKT_PER_PAGE>::new(128),
+                RecOram::<HashBkt<V, BKT_SIZE>, BKT_PER_PAGE>::new(128),
+            ],
             size: 0,
             full_bkt_stash: HashMap::new(),
             salt: rand::random::<[u8; 32]>(), // change to secure random
@@ -121,71 +130,100 @@ impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> CuckooHashMap<V> {
         }
 
         const MAX_ITER: usize = 10;
-        let mut bkts: [HashBkt<V>; 2] = [HashBkt::new(), HashBkt::new()];
-        let mut bkt_indices: [usize; 2] = [0 as usize, 0 as usize];
-        let table_capacity = self.tables[0].capacity();
-        assert!(table_capacity == self.tables[1].capacity());
+        let table_capacity = self.tables[0].size();
+        assert!(table_capacity == self.tables[1].size());
         let old_stash_entry = self.full_bkt_stash.remove(&entry.idx);
         self.size -= old_stash_entry.is_some() as usize;
-        for i in 0..2 {
-            bkt_indices[i] = entry.idx[i] % table_capacity;
-            let bkt_idx = bkt_indices[i];
-            bkts[i] = self.tables[i].get(bkt_idx).unwrap().clone();
-            let bkt = &mut bkts[i];
-            for j in 0..BKT_SIZE {
-                if bkt.entries[j].is_match(entry.idx) {
-                    // overwrite the entry
-                    let old_val = bkt.entries[j].val;
-                    bkt.entries[j] = entry;
-                    self.tables[i].set(bkt_idx, bkt);
-                    return Some(old_val);
-                }
-            }
-        }
-        self.size += 1;
-        for i in 0..2 {
-            let bkt_idx = bkt_indices[i];
-            let bkt = &mut bkts[i];
-            for j in 0..BKT_SIZE {
-                if bkt.entries[j].idx[i] % table_capacity != bkt_idx {
-                    // the entry can be overwritten
-                    bkt.entries[j] = entry;
-                    self.tables[i].set(bkt_idx, bkt);
-                    return old_stash_entry;
-                }
-            }
-        }
-        // no empty slot found
+        let mut ret = None;
+        let mut inserted_flag = false;
+        let mut need_evict_flag = false;
 
         for iter in 0..MAX_ITER {
             for i in 0..2 {
-                let bkt_idx = bkt_indices[i];
-                let bkt = &mut bkts[i];
-                if iter != 0 || i != 0 {
-                    // otherwise we have already tried to insert the entry
+                let bkt_idx = entry.idx[i] % table_capacity;
+                let update_func = |bkt: Option<HashBkt<V, BKT_SIZE>>| {
+                    // println!("Read bkt at table {} index {}", i, bkt_idx);
+                    // println!("bkt: {:?}", bkt);
+                    let mut bkt = bkt.unwrap_or_else(|| HashBkt::new());
                     for j in 0..BKT_SIZE {
-                        if bkt.entries[j].idx[i] % table_capacity != bkt_idx {
-                            // the entry can be overwritten
+                        if iter == 0 && bkt.entries[j].is_match(entry.idx) {
+                            // overwrite the entry
+                            ret = Some(bkt.entries[j].val);
+                            bkt.entries[j].delete();
+                            self.size -= 1;
+                        }
+                        if !inserted_flag && bkt.entries[j].idx[i] % table_capacity != bkt_idx {
+                            // insert the entry
                             bkt.entries[j] = entry;
-                            self.tables[i].set(bkt_idx, bkt);
-                            return old_stash_entry;
+                            self.size += 1;
+                            inserted_flag = true;
                         }
                     }
+                    if !inserted_flag && need_evict_flag {
+                        let evict_idx = rand::random::<usize>() % BKT_SIZE;
+                        std::mem::swap(&mut entry, &mut bkt.entries[evict_idx]);
+                    }
+                    // println!("Write back bkt at table {} index {}", i, bkt_idx);
+                    // println!("bkt: {:?}", bkt);
+                    Some(bkt)
+                };
+                self.tables[i].update(bkt_idx, update_func);
+                if ret.is_some() {
+                    assert!(inserted_flag);
+                    return ret;
                 }
-                let evict_idx = rand::random::<usize>() % BKT_SIZE;
-                // swap the entry with the evicted entry
-                let evicted_entry = bkt.entries[evict_idx];
-                bkt.entries[evict_idx] = entry;
-                entry = evicted_entry;
-                self.tables[i].set(bkt_idx, bkt);
-                // update the bkt for the other table
-                let neg_i = 1 - i;
-                bkt_indices[neg_i] = entry.idx[neg_i] % self.tables[neg_i].capacity();
-                bkts[neg_i] = self.tables[neg_i].get(bkt_indices[neg_i]).unwrap().clone();
+                if iter + i != 0 && inserted_flag {
+                    // the entry is inserted
+                    return old_stash_entry;
+                }
+                need_evict_flag = true; // need to evict an entry if the entry is not inserted
             }
         }
+
+        // for i in 0..2 {
+        //     let bkt_idx = bkt_indices[i];
+        //     let bkt = &mut bkts[i];
+        //     for j in 0..BKT_SIZE {
+        //         if bkt.entries[j].idx[i] % table_capacity != bkt_idx {
+        //             // the entry can be overwritten
+        //             bkt.entries[j] = entry;
+        //             self.tables[i].set(bkt_idx, bkt);
+        //             return old_stash_entry;
+        //         }
+        //     }
+        // }
+        // no empty slot found
+
+        // for iter in 0..MAX_ITER {
+        //     for i in 0..2 {
+        //         let bkt_idx = bkt_indices[i];
+        //         let bkt = &mut bkts[i];
+        //         if iter != 0 || i != 0 {
+        //             // otherwise we have already tried to insert the entry
+        //             for j in 0..BKT_SIZE {
+        //                 if bkt.entries[j].idx[i] % table_capacity != bkt_idx {
+        //                     // the entry can be overwritten
+        //                     bkt.entries[j] = entry;
+        //                     self.tables[i].set(bkt_idx, bkt);
+        //                     return old_stash_entry;
+        //                 }
+        //             }
+        //         }
+        //         let evict_idx = rand::random::<usize>() % BKT_SIZE;
+        //         // swap the entry with the evicted entry
+        //         let evicted_entry = bkt.entries[evict_idx];
+        //         bkt.entries[evict_idx] = entry;
+        //         entry = evicted_entry;
+        //         self.tables[i].set(bkt_idx, bkt);
+        //         // update the bkt for the other table
+        //         let neg_i = 1 - i;
+        //         bkt_indices[neg_i] = entry.idx[neg_i] % self.tables[neg_i].size();
+        //         bkts[neg_i] = self.tables[neg_i].get(bkt_indices[neg_i]).unwrap().clone();
+        //     }
+        // }
         print!("Cuckoo hash table is full insert to stash\n");
         // insert the entry to the bkt_full stash
+        self.size += 1;
         self.full_bkt_stash.insert(entry.idx, entry.val);
         old_stash_entry
     }
@@ -204,16 +242,18 @@ impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> CuckooHashMap<V> {
         self.insert_hash_entry(&entry)
     }
 
-    pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Option<V> {
+    pub fn get<K: AsRef<[u8]>>(&mut self, key: K) -> Option<V> {
         let key_hash = self.hash_key(key);
         let bkt_idx = Self::get_bkt_idx(key_hash);
-        let table_capacity = self.tables[0].capacity();
-        assert!(table_capacity == self.tables[1].capacity());
+        let table_capacity = self.tables[0].size();
+        assert!(table_capacity == self.tables[1].size());
         for i in 0..2 {
-            let bkt = self.tables[i].get(bkt_idx[i] % table_capacity).unwrap();
-            for j in 0..BKT_SIZE {
-                if bkt.entries[j].is_match(bkt_idx) {
-                    return Some(bkt.entries[j].val);
+            let bkt = self.tables[i].read(bkt_idx[i] % table_capacity);
+            if let Some(bkt) = bkt {
+                for j in 0..BKT_SIZE {
+                    if bkt.entries[j].is_match(bkt_idx) {
+                        return Some(bkt.entries[j].val);
+                    }
                 }
             }
         }
@@ -225,7 +265,7 @@ impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> CuckooHashMap<V> {
     }
 
     pub fn capacity(&self) -> usize {
-        self.tables[0].capacity() * 3
+        self.tables[0].size() * 3
     }
 
     pub fn double_size(&mut self) {
@@ -239,16 +279,16 @@ impl<V: Clone + Copy + Eq + Debug + Pod + Zeroable> CuckooHashMap<V> {
         println!("Size: {}", self.size);
         for i in 0..2 {
             println!("Table {}", i);
-            println!("Table capacity: {}", self.tables[i].capacity());
+            println!("Table capacity: {}", self.tables[i].size());
         }
         println!("Full bkt stash size: {}", self.full_bkt_stash.len());
     }
 
-    pub fn print_state(&self) {
+    pub fn print_state(&mut self) {
         for i in 0..2 {
             println!("Table {}", i);
-            for j in 0..self.tables[i].capacity() {
-                let bkt = self.tables[i].get(j).unwrap();
+            for j in 0..self.tables[i].size() {
+                let bkt = self.tables[i].read(j).unwrap();
                 for k in 0..BKT_SIZE {
                     println!("Bkt[{}][{}]: {:?}", j, k, bkt.entries[k]);
                 }
@@ -263,7 +303,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut map = CuckooHashMap::<u128>::new();
+        let mut map = CuckooHashMap::<u128, 4, 4>::new();
         map.insert("hello", 42);
         assert_eq!(map.get("hello"), Some(42));
         map.insert("123", 123);
@@ -273,7 +313,7 @@ mod tests {
 
     #[test]
     fn dup_test() {
-        let mut map = CuckooHashMap::<u128>::new();
+        let mut map = CuckooHashMap::<u128, 4, 4>::new();
         map.insert("hello", 42);
         assert_eq!(map.get("hello"), Some(42));
         map.insert("hello", 43);
@@ -285,19 +325,19 @@ mod tests {
 
     #[test]
     fn evict_test() {
-        let mut map = CuckooHashMap::<u64>::new();
-        for i in 0..2800 {
+        let mut map = CuckooHashMap::<u64, 8, 8>::new();
+        for i in 0..280 {
             map.insert(&i.to_string(), i);
         }
-        for i in 0..2800 {
+        for i in 0..280 {
             assert_eq!(map.get(&i.to_string()), Some(i));
         }
-        assert_eq!(2800, map.size());
+        assert_eq!(280, map.size());
     }
 
     #[test]
     fn scale_test() {
-        let mut map = CuckooHashMap::<u64>::new();
+        let mut map = CuckooHashMap::<u64, 16, 8>::new();
         for i in 0..10000 {
             let res = map.insert(&i.to_string(), i);
             assert_eq!(res, None);
@@ -310,7 +350,7 @@ mod tests {
 
     #[test]
     fn scale_and_dup_test() {
-        let mut map = CuckooHashMap::<u64>::new();
+        let mut map = CuckooHashMap::<u64, 8, 16>::new();
         for i in 0..10000 {
             map.insert(&i.to_string(), i);
         }

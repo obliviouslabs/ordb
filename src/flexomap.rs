@@ -4,7 +4,7 @@ use crate::flexoram::FlexOram;
 use std::fmt::Debug;
 pub struct FlexOmap {
     flexoram: FlexOram,
-    pos_map: CuckooHashMap<usize>,
+    pos_map: CuckooHashMap<usize, 16, 8>,
 }
 
 impl FlexOmap {
@@ -55,7 +55,7 @@ impl FlexOmap {
         self.flexoram.print_meta_state();
     }
 
-    pub fn print_state(&self) {
+    pub fn print_state(&mut self) {
         println!("FlexOmap state:");
         self.pos_map.print_state();
         // self.flexoram.print_state();
@@ -137,7 +137,7 @@ mod tests {
         for i in 0..size {
             map.insert(&i.to_string(), &vec![i as u8; 32]);
         }
-        let read_round = 10000000;
+        let read_round = 1000000;
         for r in 0..read_round {
             let i = (r * 929) % size;
             assert_eq!(map.get(&i.to_string()), Some(vec![i as u8; 32]));

@@ -1,9 +1,9 @@
-use crate::fixoram::{BlockId, FixOram, SimpleVal};
-use crate::utils::{get_low_bits, RandGen};
+use crate::fixoram::{BlockId, FixOram};
+use crate::utils::{get_low_bits, RandGen, SimpleVal};
 use bytemuck::{Pod, Zeroable};
 use std::fmt::Debug;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PosBlock<const B: usize> {
     pos: [usize; B],
     versions: [u8; B], // the current version of the position in the next map
@@ -138,12 +138,12 @@ impl<const N: usize, const B: usize> RecOramPosMap<N, B> {
     }
 }
 
-pub struct RecOram<T: SimpleVal, const N: usize, const B: usize> {
-    pos_map: RecOramPosMap<4, B>,
+pub struct RecOram<T: SimpleVal, const N: usize> {
+    pos_map: RecOramPosMap<16, 16>,
     val_ram: FixOram<T, N>,
 }
 
-impl<T: SimpleVal, const N: usize, const B: usize> RecOram<T, N, B> {
+impl<T: SimpleVal, const N: usize> RecOram<T, N> {
     pub fn new(size: usize) -> Self {
         Self {
             pos_map: RecOramPosMap::new(size),
@@ -203,6 +203,10 @@ impl<T: SimpleVal, const N: usize, const B: usize> RecOram<T, N, B> {
         self.pos_map.double_size_and_fork_self();
     }
 
+    pub fn size(&self) -> usize {
+        self.pos_map.size()
+    }
+
     pub fn print_state(&self) {
         println!("RecOram state:");
         self.pos_map.print_state();
@@ -216,7 +220,7 @@ mod tests {
     use rand::random;
     #[test]
     fn test_rec_oram_simple() {
-        let mut rec_oram: RecOram<u32, 4, 4> = RecOram::new(4);
+        let mut rec_oram: RecOram<u32, 4> = RecOram::new(4);
         rec_oram.write(0, 1);
         rec_oram.write(1, 2);
         rec_oram.write(2, 3);
@@ -232,7 +236,7 @@ mod tests {
     fn test_rec_oram_rand() {
         let size = 128;
         let mut ref_ram = vec![0; size];
-        let mut rec_oram: RecOram<u32, 4, 4> = RecOram::new(size);
+        let mut rec_oram: RecOram<u32, 4> = RecOram::new(size);
         for _ in 0..1000 {
             let write_uid = random::<usize>() % size;
             let val = random::<u32>();
@@ -252,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_rec_oram_scale_simple() {
-        let mut rec_oram: RecOram<u32, 4, 4> = RecOram::new(4);
+        let mut rec_oram: RecOram<u32, 4> = RecOram::new(4);
         rec_oram.write(0, 1);
         rec_oram.write(1, 2);
         rec_oram.write(2, 3);
@@ -270,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_rec_oram_scale_simple2() {
-        let mut rec_oram: RecOram<u32, 4, 4> = RecOram::new(4);
+        let mut rec_oram: RecOram<u32, 4> = RecOram::new(4);
         rec_oram.write(0, 1);
         rec_oram.write(1, 2);
         rec_oram.write(2, 3);
@@ -290,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_rec_oram_scale_repeat() {
-        let mut rec_oram: RecOram<u32, 4, 4> = RecOram::new(4);
+        let mut rec_oram: RecOram<u32, 4> = RecOram::new(4);
         rec_oram.write(0, 1);
         rec_oram.write(1, 2);
         rec_oram.write(2, 3);
@@ -324,7 +328,7 @@ mod tests {
     fn test_rec_oram_rand_scale() {
         let mut size = 128;
         let mut ref_ram = vec![0; size];
-        let mut rec_oram: RecOram<u32, 4, 4> = RecOram::new(size);
+        let mut rec_oram: RecOram<u32, 4> = RecOram::new(size);
         let round = 10000;
         for i in 0..round {
             if i % 2000 == 0 {

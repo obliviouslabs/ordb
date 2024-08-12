@@ -1,6 +1,8 @@
+use bytemuck::{Pod, Zeroable};
 use rand::distributions::{Distribution, Standard};
 use rand::rngs::OsRng;
 use rand::Rng;
+use std::fmt::Debug;
 
 // Define a struct that wraps the RNG
 pub struct RandGen {
@@ -26,3 +28,6 @@ impl RandGen {
 pub fn get_low_bits(value: usize, num_bits: u8) -> usize {
     value & ((1 << num_bits) - 1)
 }
+
+pub trait SimpleVal: Clone + Copy + Pod + Zeroable + Debug + PartialEq + Eq {}
+impl<T> SimpleVal for T where T: Clone + Copy + Pod + Zeroable + Debug + PartialEq + Eq {}

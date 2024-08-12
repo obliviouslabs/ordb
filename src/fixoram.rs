@@ -6,13 +6,11 @@
 use std::fmt::Debug;
 use std::vec;
 
-use crate::cuckoo::HashEntry;
 use crate::dynamictree::{calc_deepest, ORAMTree};
 use crate::params::MIN_SEGMENT_SIZE;
 use crate::params::{KEY_SIZE, PAGE_SIZE};
-use bincode::de;
+use crate::utils::SimpleVal;
 use bytemuck::{Pod, Zeroable};
-use serde::de::value;
 
 const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
 #[repr(C)]
@@ -30,9 +28,6 @@ impl BlockId {
         }
     }
 }
-
-pub trait SimpleVal: Clone + Copy + Pod + Zeroable + Debug {}
-impl<T> SimpleVal for T where T: Clone + Copy + Pod + Zeroable + Debug {}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

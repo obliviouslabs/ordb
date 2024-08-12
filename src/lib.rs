@@ -5,6 +5,7 @@ mod encvec;
 mod fixoram;
 mod flexomap;
 mod flexoram;
+mod linearoram;
 mod params;
 mod recoram;
 mod segvec;
