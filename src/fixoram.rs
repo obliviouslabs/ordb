@@ -31,7 +31,7 @@ impl BlockId {
     }
 }
 
-trait SimpleVal: Clone + Copy + Pod + Zeroable + Debug {}
+pub trait SimpleVal: Clone + Copy + Pod + Zeroable + Debug {}
 impl<T> SimpleVal for T where T: Clone + Copy + Pod + Zeroable + Debug {}
 
 #[repr(C)]
@@ -200,13 +200,6 @@ pub struct FixOram<T: SimpleVal, const N: usize> {
     empty_slots_cache: Vec<Vec<u16>>,       // a cache to store the empty slots in the path
     stash_remain_cache: Vec<u16>,           // cache the idx of stash entries that are not evicted
 }
-#[derive(Clone)]
-struct SortEntry {
-    deepest: u8,
-    src: u8,
-    len: u16,
-    offset: u32,
-}
 
 impl<T: SimpleVal, const N: usize> FixOram<T, N> {
     pub fn new() -> Self {
@@ -224,10 +217,19 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
         self.num_entry * (std::mem::size_of::<(BlockId, T)>()) + self.stash.num_bytes()
     }
 
-    pub fn update<F>(&mut self, id: &BlockId, update_func: F, new_page_id: usize)
-    where
-        F: FnOnce(Option<T>, usize) -> (Option<T>, usize),
-    {
+    fn scale_if_load_high(&mut self) {
+        let load_factor = self.num_bytes() as f64 / (self.tree.total_size() * BUFFER_SIZE) as f64;
+        if load_factor > 0.7 {
+            println!(
+                "load bytes: {} total bytes: {}",
+                self.num_bytes(),
+                self.tree.total_size() * BUFFER_SIZE
+            );
+            self.scale();
+        }
+    }
+
+    fn retrieve(&mut self, id: &BlockId) -> Option<T> {
         let path_idx = id.page_idx;
         let (mut path, layer_sizes) = self.tree.read_path(path_idx);
         let num_layer = layer_sizes.len();
@@ -322,6 +324,9 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
                     );
                 }
             }
+            if complete_flag {
+                break;
+            }
         }
 
         // delete the evicted slots from stash
@@ -348,6 +353,14 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
         }
         self.stash_remain_cache.clear();
         self.tree.write_path_move(path_idx, path);
+        result
+    }
+
+    pub fn update<F>(&mut self, id: &BlockId, update_func: F, new_page_id: usize)
+    where
+        F: FnOnce(Option<T>, usize) -> (Option<T>, usize),
+    {
+        let result = self.retrieve(id);
         let found_flag = result.is_some();
         let (result, new_uid) = update_func(result, id.uid);
         let remain_flag = result.is_some();
@@ -366,15 +379,29 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
             self.stash
                 .insert(new_page_id, new_id, result.unwrap().clone());
         }
-        let load_factor = self.num_bytes() as f64 / (self.tree.total_size() * BUFFER_SIZE) as f64;
-        if load_factor > 0.7 {
-            println!(
-                "load bytes: {} total bytes: {}",
-                self.num_bytes(),
-                self.tree.total_size() * BUFFER_SIZE
-            );
-            self.scale();
+        self.scale_if_load_high();
+    }
+
+    pub fn update_and_write_multiple<F>(&mut self, id: &BlockId, update_func: F)
+    where
+        F: FnOnce(Option<T>, usize) -> Vec<(T, usize, usize)>,
+    {
+        let result = self.retrieve(id);
+        let found_flag = result.is_some();
+        let write_backs = update_func(result, id.uid);
+        self.num_entry += write_backs.len();
+        if found_flag {
+            self.num_entry -= 1;
         }
+        for (result, new_uid, new_page_id) in write_backs {
+            let new_id = BlockId {
+                page_idx: new_page_id,
+                uid: new_uid,
+            };
+
+            self.stash.insert(new_page_id, new_id, result);
+        }
+        self.scale_if_load_high();
     }
 
     fn scale(&mut self) {

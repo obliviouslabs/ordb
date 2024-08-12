@@ -56,7 +56,7 @@ impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
             target_branching_factor = 2;
         }
         let init_min_layer_size = self.min_layer_size();
-        let mut min_branching_factor = usize::max_value();
+        let mut min_branching_factor = usize::max_value() / 2;
         let mut min_branching_factor_layer = 0;
         for i in 0..self.tree.len() - 1 {
             let branching_factor = self.tree[i].capacity() / self.tree[i + 1].capacity();
