@@ -1,12 +1,11 @@
-use std::vec;
 const ENCRYPT_FLAG: bool = true;
-use crate::pagefile::PageFile;
 use crate::params::{KEY_SIZE, PAGE_SIZE};
 use crate::storage::BlockStorage;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use bytemuck::{Pod, Zeroable};
 use rand::Rng;
+use std::convert::TryFrom;
 #[derive(Clone, Copy)]
 struct EncPage {
     data: [u8; PAGE_SIZE],
@@ -48,7 +47,8 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
                 panic!("read error: {:?}", err);
             }
             let nonce_bytes = [0u8; 12];
-            let nonce = Nonce::from_slice(&nonce_bytes);
+
+            let nonce = Nonce::try_from(&nonce_bytes[..]).expect("Failed to create nonce");
             let len_bytes = [page.data[0], page.data[1]];
             let len = u16::from_ne_bytes(len_bytes);
             if len == 0 {
@@ -57,7 +57,7 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
             if ENCRYPT_FLAG {
                 let decrypted_plaintext = self
                     .cipher
-                    .decrypt(nonce, page.data[2..2 + len as usize].as_ref())
+                    .decrypt(&nonce, page.data[2..2 + len as usize].as_ref())
                     .expect("decryption failure!");
 
                 let decrypted_data: &T = bytemuck::from_bytes(&decrypted_plaintext);
@@ -76,12 +76,12 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
             // perform an AES-NI encryption
             let mut page = EncPage::new();
             let nonce_bytes = [0u8; 12];
-            let nonce = Nonce::from_slice(&nonce_bytes);
+            let nonce = Nonce::try_from(&nonce_bytes[..]).expect("Failed to create nonce");
 
             if ENCRYPT_FLAG {
                 let encrypted_data = self
                     .cipher
-                    .encrypt(nonce, bytemuck::cast_slice(&[*value]))
+                    .encrypt(&nonce, bytemuck::cast_slice(&[*value]))
                     .expect("encryption failure!");
                 page.data[0..2].copy_from_slice(&(encrypted_data.len() as u16).to_ne_bytes());
                 page.data[2..encrypted_data.len() + 2].copy_from_slice(encrypted_data.as_ref());

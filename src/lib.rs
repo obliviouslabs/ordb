@@ -1,4 +1,3 @@
-mod adaptiveomap;
 mod cuckoo;
 mod dynamictree;
 mod encvec;

@@ -55,7 +55,6 @@ impl<T: SimpleVal, const N: usize> LinearOram<T, N> {
 
 mod tests {
     use super::*;
-    use bincode::de::read;
     use rand::random;
     #[test]
     fn test_rec_oram_simple() {

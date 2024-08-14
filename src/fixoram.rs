@@ -1,14 +1,8 @@
-// const MAX_ENTRY: usize = 32;
-
-// const BUFFER_SIZE: usize = PAGE_SIZE
-//     - 2 * MAX_ENTRY * (std::mem::size_of::<HashEntry<usize>>() + std::mem::size_of::<u16>());
-
 use std::fmt::Debug;
 use std::vec;
 
 use crate::dynamictree::{calc_deepest, ORAMTree};
-use crate::params::MIN_SEGMENT_SIZE;
-use crate::params::{KEY_SIZE, PAGE_SIZE};
+use crate::params::{KEY_SIZE, MAX_CACHE_SIZE, MIN_SEGMENT_SIZE, PAGE_SIZE};
 use crate::utils::SimpleVal;
 use bytemuck::{Pod, Zeroable};
 
@@ -152,9 +146,6 @@ impl<T: SimpleVal> Stash<T> {
         let stash_idx = idx % self.size;
         self.split_entry(stash_idx); // potentially split the entry
 
-        // let mut ret: Vec<(BlockId, T)> = Vec::new();
-        // std::mem::swap(&mut self.stash[stash_idx].kvs, &mut ret);
-        // self.num_kvs -= ret.len();
         &mut self.stash[stash_idx].kvs
     }
 
@@ -198,7 +189,7 @@ pub struct FixOram<T: SimpleVal, const N: usize> {
 impl<T: SimpleVal, const N: usize> FixOram<T, N> {
     pub fn new() -> Self {
         Self {
-            tree: ORAMTree::new(MIN_SEGMENT_SIZE * 16),
+            tree: ORAMTree::new(MAX_CACHE_SIZE),
             stash: Stash::new(MIN_SEGMENT_SIZE),
             num_entry: 0,
             evict_infos_cache: vec![Vec::new(); 48],

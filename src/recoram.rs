@@ -123,10 +123,6 @@ impl<const N: usize, const B: usize> RecOramPosMap<N, B> {
         next_id.page_idx
     }
 
-    pub fn get_rand_new_pos(&mut self) -> usize {
-        self.rand_gen.gen()
-    }
-
     pub fn size(&self) -> usize {
         self.base_level_pos.len()
     }
@@ -231,7 +227,6 @@ impl<T: SimpleVal, const N: usize> RecOram<T, N> {
 
 mod tests {
     use super::*;
-    use bincode::de::read;
     use rand::random;
     #[test]
     fn test_rec_oram_simple() {

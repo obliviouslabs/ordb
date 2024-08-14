@@ -1,7 +1,7 @@
 use crate::params::PAGE_SIZE;
 use crate::storage::BlockStorage;
 use std::fs::OpenOptions;
-use std::io::{self, Read, Write};
+use std::io::{self};
 use std::os::unix::prelude::FileExt;
 use std::path::Path;
 

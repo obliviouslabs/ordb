@@ -7,8 +7,7 @@ use std::vec;
 
 use crate::cuckoo::HashEntry;
 use crate::dynamictree::{calc_deepest, ORAMTree};
-use crate::params::MIN_SEGMENT_SIZE;
-use crate::params::{KEY_SIZE, PAGE_SIZE};
+use crate::params::{KEY_SIZE, MAX_CACHE_SIZE, MIN_SEGMENT_SIZE, PAGE_SIZE};
 use bytemuck::{Pod, Zeroable};
 
 const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
@@ -291,7 +290,7 @@ struct SortEntry {
 impl FlexOram {
     pub fn new() -> Self {
         Self {
-            tree: ORAMTree::new(MIN_SEGMENT_SIZE * 16),
+            tree: ORAMTree::new(MAX_CACHE_SIZE),
             stash: Stash::new(MIN_SEGMENT_SIZE),
             num_entry: 0,
             num_bytes: 0,
