@@ -12,7 +12,7 @@ use crate::params::{KEY_SIZE, PAGE_SIZE};
 use crate::utils::SimpleVal;
 use bytemuck::{Pod, Zeroable};
 
-const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
+pub const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BlockId {

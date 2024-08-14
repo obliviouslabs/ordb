@@ -153,6 +153,7 @@ pub struct RecOram<T: SimpleVal, const N: usize> {
 
 impl<T: SimpleVal, const N: usize> RecOram<T, N> {
     pub fn new(size: usize) -> Self {
+        println!("new recoram sizeof T: {}", std::mem::size_of::<T>());
         Self {
             pos_map: RecOramPosMap::new(size),
             val_ram: FixOram::new(),

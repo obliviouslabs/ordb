@@ -7,6 +7,7 @@ use std::path::Path;
 
 pub struct PageFile {
     file: std::fs::File,
+    path: std::path::PathBuf,
 }
 
 impl BlockStorage for PageFile {
@@ -15,12 +16,15 @@ impl BlockStorage for PageFile {
             .read(true)
             .write(true)
             .create(true)
-            .open(path)?;
+            .open(&path)?;
 
         // Reserve space by setting the file length
         file.set_len((total_pages * PAGE_SIZE) as u64)?;
 
-        Ok(PageFile { file })
+        Ok(PageFile {
+            file,
+            path: path.as_ref().to_path_buf(),
+        })
     }
 
     // Write a single page
@@ -35,5 +39,12 @@ impl BlockStorage for PageFile {
         let offset = block_idx * PAGE_SIZE;
         self.file.read_at(buf, offset as u64)?;
         Ok(())
+    }
+}
+
+impl Drop for PageFile {
+    fn drop(&mut self) {
+        // delete the file when the PageFile instance goes out of scope
+        let _ = std::fs::remove_file(&self.path);
     }
 }
