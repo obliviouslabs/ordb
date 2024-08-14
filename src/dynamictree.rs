@@ -3,7 +3,6 @@ use bytemuck::{Pod, Zeroable};
 use std::fmt::Debug;
 pub struct ORAMTree<T: Clone + Copy + Pod + Zeroable + Debug> {
     tree: Vec<SegmentedVec<T>>,
-    max_branching_factor: usize,
     top_vec_max_size: usize,
     total_size: usize,
 }
@@ -15,7 +14,6 @@ impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
         let total_size = tree[0].capacity();
         Self {
             tree,
-            max_branching_factor: 1,
             top_vec_max_size,
             total_size,
         }
@@ -47,7 +45,7 @@ impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
 
     pub fn write_path_move(&mut self, index: usize, path: Vec<T>) {
         for (i, vec) in self.tree.iter_mut().enumerate() {
-            vec.set_move(index % vec.capacity(), path[i]);
+            vec.set(index % vec.capacity(), &path[i]);
         }
     }
 

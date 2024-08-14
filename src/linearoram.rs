@@ -1,5 +1,4 @@
 use crate::utils::SimpleVal;
-use bytemuck::{Pod, Zeroable};
 pub struct LinearOram<T: SimpleVal, const N: usize> {
     val: Vec<T>,
 }
@@ -46,6 +45,11 @@ impl<T: SimpleVal, const N: usize> LinearOram<T, N> {
         for i in 0..self.size() {
             println!("{}: {:?}", i, self.val[i]);
         }
+    }
+
+    pub fn print_meta_state(&self) {
+        println!("LinearOram meta state:");
+        println!("size: {}", self.size());
     }
 }
 

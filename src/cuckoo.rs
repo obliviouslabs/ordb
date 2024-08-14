@@ -3,9 +3,11 @@ use crate::recoram::RecOram;
 use crate::utils::SimpleVal;
 use bytemuck::{Pod, Zeroable};
 use rand;
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::sync::{Arc, Mutex};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct HashEntry<V: SimpleVal> {
     idx: [usize; 2],
@@ -180,47 +182,6 @@ impl<V: SimpleVal, const BKT_SIZE: usize, const BKT_PER_PAGE: usize>
             }
         }
 
-        // for i in 0..2 {
-        //     let bkt_idx = bkt_indices[i];
-        //     let bkt = &mut bkts[i];
-        //     for j in 0..BKT_SIZE {
-        //         if bkt.entries[j].idx[i] % table_capacity != bkt_idx {
-        //             // the entry can be overwritten
-        //             bkt.entries[j] = entry;
-        //             self.tables[i].set(bkt_idx, bkt);
-        //             return old_stash_entry;
-        //         }
-        //     }
-        // }
-        // no empty slot found
-
-        // for iter in 0..MAX_ITER {
-        //     for i in 0..2 {
-        //         let bkt_idx = bkt_indices[i];
-        //         let bkt = &mut bkts[i];
-        //         if iter != 0 || i != 0 {
-        //             // otherwise we have already tried to insert the entry
-        //             for j in 0..BKT_SIZE {
-        //                 if bkt.entries[j].idx[i] % table_capacity != bkt_idx {
-        //                     // the entry can be overwritten
-        //                     bkt.entries[j] = entry;
-        //                     self.tables[i].set(bkt_idx, bkt);
-        //                     return old_stash_entry;
-        //                 }
-        //             }
-        //         }
-        //         let evict_idx = rand::random::<usize>() % BKT_SIZE;
-        //         // swap the entry with the evicted entry
-        //         let evicted_entry = bkt.entries[evict_idx];
-        //         bkt.entries[evict_idx] = entry;
-        //         entry = evicted_entry;
-        //         self.tables[i].set(bkt_idx, bkt);
-        //         // update the bkt for the other table
-        //         let neg_i = 1 - i;
-        //         bkt_indices[neg_i] = entry.idx[neg_i] % self.tables[neg_i].size();
-        //         bkts[neg_i] = self.tables[neg_i].get(bkt_indices[neg_i]).unwrap().clone();
-        //     }
-        // }
         print!("Cuckoo hash table is full insert to stash\n");
         // insert the entry to the bkt_full stash
         self.size += 1;
@@ -260,6 +221,64 @@ impl<V: SimpleVal, const BKT_SIZE: usize, const BKT_PER_PAGE: usize>
         self.full_bkt_stash.get(&bkt_idx).cloned()
     }
 
+    pub fn update_hash_entry(&mut self, entry: &HashEntry<V>) -> Option<V> {
+        let bkt_idx = entry.idx;
+        let table_capacity = self.tables[0].size();
+        assert!(table_capacity == self.tables[1].size());
+        let mut old_val = None;
+        for i in 0..2 {
+            let update_func = |bkt: Option<HashBkt<V, BKT_SIZE>>| {
+                let mut bkt = bkt.unwrap_or_else(|| HashBkt::new());
+                for j in 0..BKT_SIZE {
+                    if bkt.entries[j].is_match(bkt_idx) {
+                        old_val = Some(bkt.entries[j].val);
+                        bkt.entries[j].val = entry.val;
+                        return Some(bkt);
+                    }
+                }
+                Some(bkt)
+            };
+            self.tables[i].update(bkt_idx[i] % table_capacity, update_func);
+            if old_val.is_some() {
+                return old_val;
+            }
+        }
+        let stash_res = self.full_bkt_stash.get(&bkt_idx);
+        if stash_res.is_some() {
+            old_val = stash_res.cloned();
+            self.full_bkt_stash.insert(bkt_idx, entry.val);
+        }
+        old_val
+    }
+
+    pub fn get_parallel<K: AsRef<[u8]>>(&mut self, key: K) -> Option<V> {
+        let key_hash = self.hash_key(key);
+        let bkt_idx = Self::get_bkt_idx(key_hash);
+        let table_capacity = self.tables[0].size();
+        assert!(table_capacity == self.tables[1].size());
+        let result = Arc::new(Mutex::new(None));
+        self.tables
+            .par_iter_mut()
+            .zip(bkt_idx)
+            .for_each(|(table, idx)| {
+                let bkt = table.read(idx % table_capacity);
+                if let Some(bkt) = bkt {
+                    for j in 0..BKT_SIZE {
+                        if bkt.entries[j].is_match(bkt_idx) {
+                            let mut res = result.lock().unwrap();
+                            *res = Some(bkt.entries[j].val);
+                            break;
+                        }
+                    }
+                }
+            });
+        let res = result.lock().unwrap();
+        if res.is_some() {
+            return *res;
+        }
+        self.full_bkt_stash.get(&bkt_idx).cloned()
+    }
+
     pub fn size(&self) -> usize {
         self.size
     }
@@ -279,7 +298,7 @@ impl<V: SimpleVal, const BKT_SIZE: usize, const BKT_PER_PAGE: usize>
         println!("Size: {}", self.size);
         for i in 0..2 {
             println!("Table {}", i);
-            println!("Table capacity: {}", self.tables[i].size());
+            self.tables[i].print_meta_state();
         }
         println!("Full bkt stash size: {}", self.full_bkt_stash.len());
     }

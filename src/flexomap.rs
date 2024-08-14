@@ -4,7 +4,7 @@ use crate::flexoram::FlexOram;
 use std::fmt::Debug;
 pub struct FlexOmap {
     flexoram: FlexOram,
-    pos_map: CuckooHashMap<usize, 16, 8>,
+    pos_map: CuckooHashMap<usize, 8, 16>,
 }
 
 impl FlexOmap {
@@ -35,7 +35,7 @@ impl FlexOmap {
         let new_page_id = rand::random::<usize>();
         // println!("key {:?} get and insert to new pos {:?}", key, new_page_id);
         let mut hash_entry = self.pos_map.compute_hash_entry(key, new_page_id);
-        let old_page_id_option = self.pos_map.insert_hash_entry(&hash_entry);
+        let old_page_id_option = self.pos_map.update_hash_entry(&hash_entry);
         // println!("old_page_id_option: {:?}", old_page_id_option);
         let old_page_id = match old_page_id_option {
             Some(id) => id,
@@ -158,5 +158,6 @@ mod tests {
             assert_eq!(map.get(&i.to_string()), Some(vec![i as u8; i % 400]));
         }
         assert_eq!(size, map.size());
+        map.print_meta_state();
     }
 }

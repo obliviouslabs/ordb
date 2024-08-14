@@ -77,10 +77,6 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
     }
 
     pub fn set(&mut self, index: usize, value: &T) {
-        self.set_move(index, value.clone());
-    }
-
-    pub fn set_move(&mut self, index: usize, value: T) {
         if index >= self.size {
             return;
         }
@@ -89,12 +85,6 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
         if version_size != self.size {
             // fork the original version to other indices
             let original_index = index & (version_size - 1);
-            // let (segment_index, within_segment_index) = self.inner_indices(original_index);
-            // let original_value_ptr = unsafe {
-            //     self.segments[segment_index]
-            //         .as_mut_ptr()
-            //         .offset(within_segment_index as isize)
-            // };
             // TODO: avoid decrypt and re-encrypt
             let original_value = self.get(original_index).unwrap();
             self.versions[original_index] = self.log_size;
@@ -102,17 +92,7 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
             while to_idx < self.size {
                 if to_idx != index {
                     let (to_segment_index, to_within_segment_index) = self.inner_indices(to_idx);
-                    // unsafe {
-                    //     std::ptr::copy_nonoverlapping(
-                    //         original_value_ptr,
-                    //         self.segments[to_segment_index]
-                    //             .as_mut_ptr()
-                    //             .offset(to_within_segment_index as isize),
-                    //         1,
-                    //     );
-                    // }
-                    self.segments[to_segment_index].put(to_within_segment_index, original_value);
-                    // TODO: avoid decrypt and encrypt
+                    self.segments[to_segment_index].put(to_within_segment_index, &original_value);
                 }
                 self.versions[to_idx] = self.log_size;
                 to_idx += version_size;

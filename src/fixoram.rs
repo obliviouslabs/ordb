@@ -133,7 +133,6 @@ impl<T: SimpleVal> Stash<T> {
         if num_stash_entry_rec >= self.size {
             return; // no need to split
         }
-        println!("Splitting entry: {}", stash_idx);
         let from_idx = stash_idx % num_stash_entry_rec;
         let from_entry = &self.stash[from_idx];
         let scaling_factor = self.size / num_stash_entry_rec;

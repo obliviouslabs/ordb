@@ -136,6 +136,14 @@ impl<const N: usize, const B: usize> RecOramPosMap<N, B> {
         println!("base_level_pos: {:?}", self.base_level_pos);
         println!("base_level_versions: {:?}", self.base_level_versions);
     }
+
+    pub fn print_meta_state(&self) {
+        println!("RecOramPosMap meta state:");
+        println!(
+            "base_level_memory: {:?} MB",
+            self.base_level_pos.len() as f64 * 9.0 / 1024.0 / 1024.0
+        );
+    }
 }
 
 pub struct RecOram<T: SimpleVal, const N: usize> {
@@ -211,6 +219,12 @@ impl<T: SimpleVal, const N: usize> RecOram<T, N> {
         println!("RecOram state:");
         self.pos_map.print_state();
         self.val_ram.print_state();
+    }
+
+    pub fn print_meta_state(&self) {
+        println!("RecOram meta state:");
+        self.pos_map.print_meta_state();
+        self.val_ram.print_meta_state();
     }
 }
 

@@ -29,5 +29,19 @@ pub fn get_low_bits(value: usize, num_bits: u8) -> usize {
     value & ((1 << num_bits) - 1)
 }
 
-pub trait SimpleVal: Clone + Copy + Pod + Zeroable + Debug + PartialEq + Eq {}
-impl<T> SimpleVal for T where T: Clone + Copy + Pod + Zeroable + Debug + PartialEq + Eq {}
+pub trait SimpleVal:
+    Clone + Copy + Pod + Zeroable + Debug + PartialEq + Eq + std::marker::Send + std::marker::Sync
+{
+}
+impl<T> SimpleVal for T where
+    T: Clone
+        + Copy
+        + Pod
+        + Zeroable
+        + Debug
+        + PartialEq
+        + Eq
+        + std::marker::Send
+        + std::marker::Sync
+{
+}
