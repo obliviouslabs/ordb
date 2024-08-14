@@ -6,9 +6,11 @@ mod fixoram;
 mod flexomap;
 mod flexoram;
 mod linearoram;
+mod pagefile;
 mod params;
 mod recoram;
 mod segvec;
+mod storage;
 mod utils;
 
 pub fn add(left: usize, right: usize) -> usize {

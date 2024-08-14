@@ -1,15 +1,19 @@
 use std::vec;
 const ENCRYPT_FLAG: bool = true;
+use crate::pagefile::PageFile;
 use crate::params::{KEY_SIZE, PAGE_SIZE};
+use crate::storage::BlockStorage;
 use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::{Aes256Gcm, Nonce};
 use bytemuck::{Pod, Zeroable};
+use rand::Rng;
 #[derive(Clone, Copy)]
 struct EncPage {
     data: [u8; PAGE_SIZE],
 }
-pub struct EncVec<T: Clone + Pod + Zeroable> {
-    pages: Vec<EncPage>,
+pub struct EncVec<T: Clone + Pod + Zeroable, StoreT: BlockStorage> {
+    file_pages: StoreT,
+    size: usize,
     cipher: Aes256Gcm,
     phantom: std::marker::PhantomData<T>,
 }
@@ -22,20 +26,27 @@ impl EncPage {
     }
 }
 
-impl<T: Clone + Pod + Zeroable> EncVec<T> {
+impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
     pub fn new(size: usize, raw_key: &[u8; KEY_SIZE]) -> Self {
         let key = (*raw_key).into();
+        let filename_uid = rand::thread_rng().gen::<u64>();
+        let filename = format!("encvec_{}.dat", filename_uid);
         Self {
-            pages: vec![EncPage::new(); size],
+            file_pages: StoreT::open(filename, size).unwrap(),
+            size,
             cipher: Aes256Gcm::new(&key),
             phantom: std::marker::PhantomData,
         }
     }
 
     pub fn get(&self, index: usize) -> Option<T> {
-        if index < self.pages.len() {
+        if index < self.size {
             // perform an AES-NI decryption
-            let page = &self.pages[index];
+            let mut page = EncPage::new();
+            let err = self.file_pages.read(index, &mut page.data);
+            if err.is_err() {
+                panic!("read error: {:?}", err);
+            }
             let nonce_bytes = [0u8; 12];
             let nonce = Nonce::from_slice(&nonce_bytes);
             let len_bytes = [page.data[0], page.data[1]];
@@ -61,9 +72,9 @@ impl<T: Clone + Pod + Zeroable> EncVec<T> {
     }
 
     pub fn put(&mut self, index: usize, value: &T) {
-        if index < self.pages.len() {
+        if index < self.size {
             // perform an AES-NI encryption
-            let page = &mut self.pages[index];
+            let mut page = EncPage::new();
             let nonce_bytes = [0u8; 12];
             let nonce = Nonce::from_slice(&nonce_bytes);
 
@@ -79,17 +90,22 @@ impl<T: Clone + Pod + Zeroable> EncVec<T> {
                 page.data[0..2].copy_from_slice(&len.to_ne_bytes());
                 page.data[8..len as usize + 8].copy_from_slice(bytemuck::cast_slice(&[*value]));
             }
+            let err = self.file_pages.write(index, &page.data);
+            if err.is_err() {
+                panic!("write error: {:?}", err);
+            }
         }
     }
 }
 
 mod tests {
     use crate::encvec::EncVec;
+    use crate::pagefile::PageFile;
     use crate::params::PAGE_SIZE;
 
     #[test]
     fn it_works() {
-        let mut vec = EncVec::<u128>::new(1024, &[0u8; 32]);
+        let mut vec = EncVec::<u128, PageFile>::new(1024, &[0u8; 32]);
         vec.put(0, &42);
         assert_eq!(vec.get(0), Some(42));
     }
@@ -114,7 +130,7 @@ mod tests {
     fn enc_perf_test() {
         let num_pages = 1e6 as usize;
         const BUFFER_SIZE: usize = PAGE_SIZE - 64;
-        let mut vec = EncVec::<TestBuffer>::new(PAGE_SIZE, &[0u8; 32]);
+        let mut vec = EncVec::<TestBuffer, PageFile>::new(PAGE_SIZE, &[0u8; 32]);
         for round in 0..num_pages {
             let mut buffer = TestBuffer::default();
             for i in 0..8 {

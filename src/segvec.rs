@@ -1,10 +1,11 @@
 use crate::encvec::EncVec;
+use crate::pagefile::PageFile;
 use crate::params::MIN_SEGMENT_SIZE;
 use bytemuck::{Pod, Zeroable};
 use std::mem;
 
 pub struct SegmentedVec<T: Clone + Pod + Zeroable> {
-    segments: Vec<EncVec<T>>,
+    segments: Vec<EncVec<T, PageFile>>,
     pub versions: Vec<u8>,
     size: usize,
     log_size: u8,
