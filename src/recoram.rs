@@ -42,6 +42,38 @@ impl<const N: usize, const B: usize> RecOramPosMap<N, B> {
         }
     }
 
+    // put data in the base level into a fixoram, and reset a smaller base level
+    pub fn add_new_level(&mut self) {
+        let mut new_level = FixOram::new();
+        let len = self.base_level_pos.len();
+        let log_len = len.trailing_zeros() as u8;
+        let new_base_len = len / B;
+
+        let mut new_base_level_pos = vec![0 as usize; new_base_len];
+        let new_base_level_versions = vec![log_len as u8; new_base_len];
+        for i in 0..new_base_len {
+            let new_pos: usize = self.rand_gen.gen();
+            new_base_level_pos[i] = new_pos;
+            let mut new_block: PosBlock<B> = PosBlock::new();
+            for j in 0..B {
+                new_block.pos[j] = self.base_level_pos[i * B + j];
+                new_block.versions[j] = self.base_level_versions[i * B + j];
+            }
+            new_level.write(
+                &BlockId {
+                    page_idx: i, // deterministic eviction
+                    uid: i,
+                },
+                &new_block,
+                new_pos,
+            );
+        }
+        self.ext_levels.push(new_level);
+        self.ext_level_log_sizes.push(log_len);
+        self.base_level_pos = new_base_level_pos;
+        self.base_level_versions = new_base_level_versions;
+    }
+
     /**
      * Get the position for the given uid and set the new positions for all the relevant uninitialized uids in the map.
      */
@@ -68,60 +100,72 @@ impl<const N: usize, const B: usize> RecOramPosMap<N, B> {
         self.base_level_log_size += 1;
     }
 
-    pub fn get_pos(&mut self, uid: usize) -> usize {
-        let base_idx = uid % self.base_level_pos.len();
-        let mut next_version = self.base_level_versions[base_idx];
-        let mut next_id = BlockId {
-            page_idx: self.base_level_pos[base_idx],
-            uid: get_low_bits(uid, next_version),
-        };
-        if next_id.page_idx == 0 {
-            // read a random path in the next level position map for obliviousness
-            next_id.page_idx = self.rand_gen.gen();
-        }
-        let mut new_pos = self.rand_gen.gen();
-        self.base_level_pos[base_idx] = new_pos;
-        let mut remain_offsets = uid / self.base_level_pos.len();
-        for (i, level) in self.ext_levels.iter_mut().enumerate() {
-            let block_offset = remain_offsets % B;
-            remain_offsets /= B;
-            let mut next_pos = 0 as usize;
+    // pub fn get_pos(&mut self, uid: usize) -> (usize, u8, Vec<usize>) {
+    //     let base_idx = uid % self.base_level_pos.len();
+    //     let mut next_version = self.base_level_versions[base_idx];
+    //     let mut next_id = BlockId {
+    //         page_idx: self.base_level_pos[base_idx],
+    //         uid: get_low_bits(uid, next_version),
+    //     };
 
-            let next_new_pos = self.rand_gen.gen();
-            let updated_this_version = self.base_level_versions[i];
-            let updated_next_version = self.ext_level_log_sizes[i + 1];
-            let this_version = next_version;
-            let updated_this_uid = get_low_bits(uid, updated_this_version);
+    //     let scaling_factor = 1 << (self.base_level_log_size - next_version);
+    //     let mut new_positions = vec![0; scaling_factor];
+    //     for i in 0..scaling_factor {
+    //         new_positions[i] = self.rand_gen.gen();
+    //         let idx = next_id.uid + (i << next_version);
+    //         self.base_level_pos[idx] = new_positions[i];
+    //         self.base_level_versions[idx] = self.base_level_log_size;
+    //     }
+    //     let mut remain_offsets = uid / (1 << next_version);
+    //     for (i, level) in self.ext_levels.iter_mut().rev().enumerate() {
+    //         let level_update_func = |pos_block: Option<PosBlock<B>>, id: usize| {
+    //             let old_block_unwrap = pos_block.unwrap_or(PosBlock::new());
+    //             let offset = remain_offsets % B;
+    //             let old_pos = old_block_unwrap.pos[offset];
+    //             let old_next_version = old_block_unwrap.versions[offset];
+    //             let next_level_scaling_factor =
+    //                 1 << (self.ext_level_log_sizes[i] - old_next_version);
+    //             assert!(next_level_scaling_factor >= scaling_factor);
+    //         };
+    //         // let block_offset = remain_offsets % B;
+    //         // remain_offsets /= B;
+    //         // let mut next_pos = 0 as usize;
 
-            let update_func = |pos_block: Option<PosBlock<B>>, _| {
-                let mut ret_block = if let Some(pos_block_unwrap) = pos_block {
-                    next_pos = pos_block_unwrap.pos[block_offset];
-                    next_version = pos_block_unwrap.versions[block_offset];
-                    pos_block_unwrap
-                } else {
-                    next_pos = self.rand_gen.gen();
-                    next_version = updated_next_version;
-                    PosBlock::new()
-                };
-                ret_block.pos[block_offset] = next_new_pos;
-                ret_block.versions[block_offset] = updated_next_version;
-                (Some(ret_block), updated_this_uid)
-            };
-            level.update(&next_id, update_func, new_pos);
-            if this_version != updated_this_version {
-                // the version has changed, need to clone the entry
-                let scale_factor = 1 << (updated_this_version - this_version);
-                for j in 0..scale_factor {
-                    let uid_to_write = get_low_bits(uid, this_version) * j;
-                    if uid_to_write != updated_this_uid {}
-                }
-            }
-            next_id.page_idx = next_pos;
-            next_id.uid = get_low_bits(uid, next_version);
-            new_pos = next_new_pos;
-        }
-        next_id.page_idx
-    }
+    //         // let next_new_pos = self.rand_gen.gen();
+    //         // let updated_this_version = self.base_level_versions[i];
+    //         // let updated_next_version = self.ext_level_log_sizes[i + 1];
+    //         // let this_version = next_version;
+    //         // let updated_this_uid = get_low_bits(uid, updated_this_version);
+
+    //         // let update_func = |pos_block: Option<PosBlock<B>>, _| {
+    //         //     let mut ret_block = if let Some(pos_block_unwrap) = pos_block {
+    //         //         next_pos = pos_block_unwrap.pos[block_offset];
+    //         //         next_version = pos_block_unwrap.versions[block_offset];
+    //         //         pos_block_unwrap
+    //         //     } else {
+    //         //         next_pos = self.rand_gen.gen();
+    //         //         next_version = updated_next_version;
+    //         //         PosBlock::new()
+    //         //     };
+    //         //     ret_block.pos[block_offset] = next_new_pos;
+    //         //     ret_block.versions[block_offset] = updated_next_version;
+    //         //     (Some(ret_block), updated_this_uid)
+    //         // };
+    //         // level.update(&next_id, update_func, new_pos);
+    //         // if this_version != updated_this_version {
+    //         //     // the version has changed, need to clone the entry
+    //         //     let scale_factor = 1 << (updated_this_version - this_version);
+    //         //     for j in 0..scale_factor {
+    //         //         let uid_to_write = get_low_bits(uid, this_version) * j;
+    //         //         if uid_to_write != updated_this_uid {}
+    //         //     }
+    //         // }
+    //         // next_id.page_idx = next_pos;
+    //         // next_id.uid = get_low_bits(uid, next_version);
+    //         // new_pos = next_new_pos;
+    //     }
+    //     (next_id.page_idx, next_version, vec![0; 0])
+    // }
 
     pub fn size(&self) -> usize {
         self.base_level_pos.len()
