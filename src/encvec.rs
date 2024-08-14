@@ -1,5 +1,5 @@
 use std::vec;
-
+const ENCRYPT_FLAG: bool = true;
 use crate::params::{KEY_SIZE, PAGE_SIZE};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -43,13 +43,18 @@ impl<T: Clone + Pod + Zeroable> EncVec<T> {
             if len == 0 {
                 return Some(unsafe { std::mem::zeroed() });
             }
-            let decrypted_plaintext = self
-                .cipher
-                .decrypt(nonce, page.data[2..2 + len as usize].as_ref())
-                .expect("decryption failure!");
+            if ENCRYPT_FLAG {
+                let decrypted_plaintext = self
+                    .cipher
+                    .decrypt(nonce, page.data[2..2 + len as usize].as_ref())
+                    .expect("decryption failure!");
 
-            let decrypted_data: &T = bytemuck::from_bytes(&decrypted_plaintext);
-            Some(*decrypted_data)
+                let decrypted_data: &T = bytemuck::from_bytes(&decrypted_plaintext);
+                Some(*decrypted_data)
+            } else {
+                let decrypted_data: &T = bytemuck::from_bytes(&page.data[8..8 + len as usize]);
+                Some(*decrypted_data)
+            }
         } else {
             None
         }
@@ -61,12 +66,19 @@ impl<T: Clone + Pod + Zeroable> EncVec<T> {
             let page = &mut self.pages[index];
             let nonce_bytes = [0u8; 12];
             let nonce = Nonce::from_slice(&nonce_bytes);
-            let encrypted_data = self
-                .cipher
-                .encrypt(nonce, bytemuck::cast_slice(&[*value]))
-                .expect("encryption failure!");
-            page.data[0..2].copy_from_slice(&(encrypted_data.len() as u16).to_ne_bytes());
-            page.data[2..encrypted_data.len() + 2].copy_from_slice(encrypted_data.as_ref());
+
+            if ENCRYPT_FLAG {
+                let encrypted_data = self
+                    .cipher
+                    .encrypt(nonce, bytemuck::cast_slice(&[*value]))
+                    .expect("encryption failure!");
+                page.data[0..2].copy_from_slice(&(encrypted_data.len() as u16).to_ne_bytes());
+                page.data[2..encrypted_data.len() + 2].copy_from_slice(encrypted_data.as_ref());
+            } else {
+                let len = std::mem::size_of::<T>() as u16;
+                page.data[0..2].copy_from_slice(&len.to_ne_bytes());
+                page.data[8..len as usize + 8].copy_from_slice(bytemuck::cast_slice(&[*value]));
+            }
         }
     }
 }
