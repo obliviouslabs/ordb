@@ -26,7 +26,7 @@ impl BlockId {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Page<T: SimpleVal, const N: usize> {
     indices: [BlockId; N],
     data: [T; N],

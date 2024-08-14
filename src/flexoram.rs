@@ -12,7 +12,7 @@ use bytemuck::{Pod, Zeroable};
 
 const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Page {
     filled_bytes: u16,
     buffer: [u8; BUFFER_SIZE],

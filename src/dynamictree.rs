@@ -1,16 +1,19 @@
 use crate::segvec::SegmentedVec;
+use crate::utils::SimpleVal;
 use bytemuck::{Pod, Zeroable};
+use rayon::prelude::*;
+use rayon::vec;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 const LOCK_COUNT: usize = 128;
-pub struct ORAMTree<T: Clone + Copy + Pod + Zeroable + Debug> {
+pub struct ORAMTree<T: SimpleVal> {
     tree: Vec<SegmentedVec<T>>,
     top_vec_max_size: usize,
     total_size: usize,
     vec_lock: Vec<Mutex<()>>,
 }
 
-impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
+impl<T: SimpleVal> ORAMTree<T> {
     pub fn new(top_vec_max_size: usize) -> Self {
         let mut tree = Vec::new();
         tree.push(SegmentedVec::new());
@@ -35,22 +38,36 @@ impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
     }
 
     pub fn read_path(&self, index: usize) -> (Vec<T>, Vec<usize>) {
-        let mut path = Vec::new();
-        let mut capacities = Vec::new();
-        path.reserve(self.tree.len());
-        capacities.reserve(self.tree.len());
-        for vec in self.tree.iter() {
-            let level_idx = index % vec.capacity();
-            path.push(vec.get(level_idx).unwrap());
-            capacities.push(vec.capacity());
+        let mut path = vec![T::zeroed(); self.tree.len()];
+        let mut capacities = vec![0; self.tree.len()];
+        // path.reserve(self.tree.len());
+        // capacities.reserve(self.tree.len());
+        for (i, vec) in self.tree.iter().enumerate() {
+            capacities[i] = vec.capacity();
         }
+        path.iter_mut().enumerate().for_each(|(i, page)| {
+            let vec = &self.tree[i];
+            let level_idx = index % vec.capacity();
+            *page = vec.get(level_idx).unwrap();
+        });
+        // parallelize this
+        // for vec in self.tree.iter() {
+        //     let level_idx = index % vec.capacity();
+        //     path.push(vec.get(level_idx).unwrap());
+        // }
+
         (path, capacities)
     }
 
     pub fn write_path(&self, index: usize, path: &Vec<T>) {
-        for (i, vec) in self.tree.iter().enumerate() {
-            vec.set(index % vec.capacity(), &path[i]);
-        }
+        // for (i, vec) in self.tree.iter().enumerate() {
+        //     vec.set(index % vec.capacity(), &path[i]);
+        // }
+        path.iter().enumerate().for_each(|(i, page)| {
+            let vec = &self.tree[i];
+            let level_idx = index % vec.capacity();
+            vec.set(level_idx, page);
+        });
     }
 
     pub fn lock_path(&self, index: usize) -> std::sync::MutexGuard<()> {
