@@ -2,10 +2,11 @@ use crate::encvec::EncVec;
 use crate::pagefile::PageFile;
 use crate::params::MIN_SEGMENT_SIZE;
 use bytemuck::{Pod, Zeroable};
+use std::sync::RwLock;
 
 pub struct SegmentedVec<T: Clone + Pod + Zeroable> {
     segments: Vec<EncVec<T, PageFile>>,
-    pub versions: Vec<u8>,
+    pub versions: RwLock<Vec<u8>>,
     size: usize,
     log_size: u8,
 }
@@ -19,7 +20,7 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
             segments: vec![initial_segment],
             size: MIN_SEGMENT_SIZE,
             log_size: init_version,
-            versions: vec![init_version; MIN_SEGMENT_SIZE],
+            versions: RwLock::new(vec![init_version; MIN_SEGMENT_SIZE]),
         }
     }
 
@@ -47,16 +48,11 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
     //     self.size *= 2;
     // }
     pub fn double_size_and_fork_self(&mut self) {
-        let original_size = self.size;
         self.double_size();
-        self.versions.resize(self.size, 0);
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.versions.as_ptr(),
-                self.versions.as_mut_ptr().offset(original_size as isize),
-                original_size,
-            );
-        }
+        self.versions
+            .write()
+            .unwrap()
+            .extend_from_within(0..self.size);
     }
 
     fn inner_indices(&self, index: usize) -> (usize, usize) {
@@ -70,31 +66,33 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
         if index >= self.size {
             return None;
         }
-        let version = self.versions[index];
+        let version_raii = self.versions.read().unwrap();
+        let version = version_raii[index];
         let actual_index = index & ((1 << version) - 1);
         let (segment_index, within_segment_index) = self.inner_indices(actual_index);
         self.segments[segment_index].get(within_segment_index)
     }
 
-    pub fn set(&mut self, index: usize, value: &T) {
+    pub fn set(&self, index: usize, value: &T) {
         if index >= self.size {
             return;
         }
-        let version = self.versions[index];
+        let mut versions = self.versions.write().unwrap();
+        let version = versions[index];
         let version_size = 1 << version;
         if version_size != self.size {
             // fork the original version to other indices
             let original_index = index & (version_size - 1);
             // TODO: avoid decrypt and re-encrypt
             let original_value = self.get(original_index).unwrap();
-            self.versions[original_index] = self.log_size;
+            versions[original_index] = self.log_size;
             let mut to_idx = original_index + version_size;
             while to_idx < self.size {
                 if to_idx != index {
                     let (to_segment_index, to_within_segment_index) = self.inner_indices(to_idx);
                     self.segments[to_segment_index].put(to_within_segment_index, &original_value);
                 }
-                self.versions[to_idx] = self.log_size;
+                versions[to_idx] = self.log_size;
                 to_idx += version_size;
             }
         }

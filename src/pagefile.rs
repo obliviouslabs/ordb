@@ -4,9 +4,10 @@ use std::fs::OpenOptions;
 use std::io::{self};
 use std::os::unix::prelude::FileExt;
 use std::path::Path;
+use std::sync::RwLock;
 
 pub struct PageFile {
-    file: std::fs::File,
+    file: RwLock<std::fs::File>,
     path: std::path::PathBuf,
 }
 
@@ -22,22 +23,22 @@ impl BlockStorage for PageFile {
         file.set_len((total_pages * PAGE_SIZE) as u64)?;
 
         Ok(PageFile {
-            file,
+            file: RwLock::new(file),
             path: path.as_ref().to_path_buf(),
         })
     }
 
     // Write a single page
-    fn write(&mut self, block_idx: usize, buf: &[u8]) -> io::Result<()> {
+    fn write(&self, block_idx: usize, buf: &[u8]) -> io::Result<()> {
         let offset = block_idx * PAGE_SIZE;
-        self.file.write_at(buf, offset as u64)?;
+        self.file.write().unwrap().write_at(buf, offset as u64)?;
         Ok(())
     }
 
     // Read a single page
     fn read(&self, block_idx: usize, buf: &mut [u8]) -> io::Result<()> {
         let offset = block_idx * PAGE_SIZE;
-        self.file.read_at(buf, offset as u64)?;
+        self.file.read().unwrap().read_at(buf, offset as u64)?;
         Ok(())
     }
 }
