@@ -5,6 +5,8 @@ use crate::dynamictree::{calc_deepest, ORAMTree};
 use crate::params::{KEY_SIZE, MAX_CACHE_SIZE, MIN_SEGMENT_SIZE, PAGE_SIZE};
 use crate::utils::SimpleVal;
 use bytemuck::{Pod, Zeroable};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 pub const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
 #[repr(C)]
@@ -60,20 +62,23 @@ impl<T: SimpleVal, const N: usize> Page<T, N> {
 #[derive(Clone)]
 struct StashEntry<T> {
     pub kvs: Vec<(BlockId, T)>,
+    pub version: u8,
 }
 
 impl<T: SimpleVal> StashEntry<T> {
-    fn new() -> Self {
-        Self { kvs: Vec::new() }
+    fn new(version: u8) -> Self {
+        Self {
+            kvs: Vec::new(),
+            version,
+        }
     }
 }
 
 struct Stash<T> {
-    stash: Vec<StashEntry<T>>,
-    versions: Vec<u8>,
+    stash: Vec<Mutex<StashEntry<T>>>,
     size: usize,
     log_size: u8,
-    num_kvs: usize,
+    num_kvs: AtomicUsize,
 }
 
 impl<T: SimpleVal> Stash<T> {
@@ -82,14 +87,17 @@ impl<T: SimpleVal> Stash<T> {
     pub fn new(init_size: usize) -> Self {
         assert!((init_size & (init_size - 1)) == 0); // must be power of 2
         let log_init_size = init_size.trailing_zeros() as u8;
-        let stash = vec![StashEntry::new(); init_size];
-        let versions = vec![log_init_size; init_size];
+        // let stash = vec![StashEntry::new(); init_size];
+        let mut stash = Vec::new();
+        stash.reserve(init_size);
+        for _ in 0..init_size {
+            stash.push(Mutex::new(StashEntry::new(log_init_size)));
+        }
         Self {
             stash,
-            versions,
             size: init_size,
             log_size: log_init_size,
-            num_kvs: 0,
+            num_kvs: AtomicUsize::new(0),
         }
     }
     pub fn scale(&mut self, new_size: usize) {
@@ -102,59 +110,64 @@ impl<T: SimpleVal> Stash<T> {
         }
         assert_eq!(self.size, self.stash.len());
         let old_size = self.size;
-        self.stash.resize(new_size, StashEntry::new());
-        self.versions.resize(new_size, 0u8);
+        self.stash.reserve(new_size - old_size);
+
         // copy the versions
         let scale_factor = new_size / old_size;
-        for i in 1..scale_factor {
-            unsafe {
-                std::ptr::copy(
-                    self.versions.as_ptr(),
-                    self.versions
-                        .as_mut_ptr()
-                        .offset(i as isize * old_size as isize),
-                    old_size,
-                );
+        for _ in 1..scale_factor {
+            for j in 0..old_size {
+                let version = self.stash.get(j).unwrap().lock().unwrap().version;
+                self.stash.push(Mutex::new(StashEntry::new(version)));
             }
         }
         self.size = new_size;
         self.log_size = new_size.trailing_zeros() as u8;
     }
 
-    fn split_entry(&mut self, stash_idx: usize) {
-        let version = self.versions[stash_idx];
+    fn split_entry(&self, stash_idx: usize) {
+        let version = self.stash[stash_idx].lock().unwrap().version;
         let num_stash_entry_rec = 1 << version;
         if num_stash_entry_rec >= self.size {
             return; // no need to split
         }
         let from_idx = stash_idx % num_stash_entry_rec;
-        let from_entry = &self.stash[from_idx];
+        let from_entry = &mut self.stash[from_idx].lock().unwrap();
+        if from_entry.version != version {
+            return; // already split
+        }
         let scaling_factor = self.size / num_stash_entry_rec;
         let mut kvs_after_split = vec![Vec::new(); scaling_factor];
         for (entry, value) in from_entry.kvs.iter() {
             let new_idx = entry.page_idx % self.size;
             kvs_after_split[new_idx / num_stash_entry_rec].push((entry.clone(), value.clone()));
         }
-        for i in 0..scaling_factor {
+        std::mem::swap(&mut from_entry.kvs, &mut kvs_after_split[0]);
+        from_entry.version = self.log_size;
+        for i in 1..scaling_factor {
             let to_idx = i * num_stash_entry_rec + from_idx;
-            std::mem::swap(&mut self.stash[to_idx].kvs, &mut kvs_after_split[i]);
-            self.versions[to_idx] = self.log_size;
+            let to_entry = &mut self.stash[to_idx].lock().unwrap();
+            std::mem::swap(&mut to_entry.kvs, &mut kvs_after_split[i]);
+            to_entry.version = self.log_size;
         }
     }
 
-    pub fn get_mut(&mut self, idx: usize) -> &mut Vec<(BlockId, T)> {
-        let stash_idx = idx % self.size;
-        self.split_entry(stash_idx); // potentially split the entry
+    // pub fn get_mut(&self, idx: usize) -> &mut Vec<(BlockId, T)> {
+    //     let stash_idx = idx % self.size;
+    //     self.split_entry(stash_idx); // potentially split the entry
 
-        &mut self.stash[stash_idx].kvs
-    }
+    //     &mut self.stash[stash_idx].lock().unwrap().kvs
+    // }
 
-    pub fn insert(&mut self, idx: usize, entry: BlockId, value: T) {
+    pub fn insert(&self, idx: usize, entry: BlockId, value: T) {
         let stash_idx = idx % self.size;
         self.split_entry(stash_idx); // potentially split the entry
                                      // we don't perform merge during insert
-        self.num_kvs += 1;
-        self.stash[stash_idx].kvs.push((entry, value));
+        self.num_kvs.fetch_add(1, Ordering::Relaxed);
+        self.stash[stash_idx]
+            .lock()
+            .unwrap()
+            .kvs
+            .push((entry, value));
     }
 
     pub fn size(&self) -> usize {
@@ -162,11 +175,11 @@ impl<T: SimpleVal> Stash<T> {
     }
 
     pub fn num_kvs(&self) -> usize {
-        self.num_kvs
+        self.num_kvs.load(Ordering::Relaxed)
     }
 
     pub fn num_bytes(&self) -> usize {
-        self.num_kvs * Self::STASH_ENTRY_SIZE
+        self.num_kvs.load(Ordering::Relaxed) * Self::STASH_ENTRY_SIZE
             + self.size * (std::mem::size_of::<StashEntry<T>>() + 1)
     }
 }
@@ -181,9 +194,6 @@ pub struct FixOram<T: SimpleVal, const N: usize> {
     tree: ORAMTree<Page<T, N>>,
     stash: Stash<T>,
     num_entry: usize,
-    evict_infos_cache: Vec<Vec<EvictInfo>>, // a cache to store the src position of entries to evict
-    empty_slots_cache: Vec<Vec<u16>>,       // a cache to store the empty slots in the path
-    stash_remain_cache: Vec<u16>,           // cache the idx of stash entries that are not evicted
 }
 
 impl<T: SimpleVal, const N: usize> FixOram<T, N> {
@@ -192,9 +202,9 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
             tree: ORAMTree::new(MAX_CACHE_SIZE),
             stash: Stash::new(MIN_SEGMENT_SIZE),
             num_entry: 0,
-            evict_infos_cache: vec![Vec::new(); 48],
-            empty_slots_cache: vec![Vec::new(); 48],
-            stash_remain_cache: Vec::new(),
+            // evict_infos_cache: vec![Vec::new(); 48],
+            // empty_slots_cache: vec![Vec::new(); 48],
+            // stash_remain_cache: Vec::new(),
         }
     }
 
@@ -214,8 +224,13 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
         }
     }
 
-    fn retrieve(&mut self, id: &BlockId) -> Option<T> {
+    fn retrieve(&self, id: &BlockId) -> Option<T> {
         let path_idx = id.page_idx;
+        let stash_idx = path_idx % self.stash.size();
+        self.stash.split_entry(stash_idx);
+        // the stash_vec is a guard that also protects the path
+        let stash_vec = &mut self.stash.stash[stash_idx].lock().unwrap();
+        // let path_guard = self.tree.lock_path(path_idx);
         let (mut path, layer_sizes) = self.tree.read_path(path_idx);
         let num_layer = layer_sizes.len();
         let layer_log_sizes: Vec<u8> = layer_sizes
@@ -223,7 +238,9 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
             .map(|x| x.trailing_zeros() as u8)
             .collect();
         let mut result: Option<T> = None;
-
+        let mut empty_slots_cache: Vec<Vec<u16>> = vec![Vec::new(); num_layer]; // a cache to store the empty slots in the path
+        let mut stash_remain_cache: Vec<u16> = Vec::new(); // cache the idx of stash entries that are not evicted
+        let mut evict_infos_cache: Vec<Vec<EvictInfo>> = vec![Vec::new(); num_layer]; // a cache to store the src position of entries to evict
         for (i, page) in path.iter_mut().enumerate() {
             let entry = page.read_and_remove_entry(id);
             if entry.is_some() {
@@ -233,9 +250,9 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
                 let page_idx = page.indices[j].page_idx;
                 let deepest = calc_deepest(page_idx, path_idx, &layer_log_sizes);
                 if deepest > i as u8 {
-                    self.empty_slots_cache[i].push(j as u16);
+                    empty_slots_cache[i].push(j as u16);
                 } else if deepest < i as u8 {
-                    self.evict_infos_cache[deepest as usize].push(EvictInfo {
+                    evict_infos_cache[deepest as usize].push(EvictInfo {
                         is_from_stash: false,
                         src: i as u8,
                         offset: j as u16,
@@ -243,14 +260,14 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
                 }
             }
         }
-        let stash_vec = self.stash.get_mut(path_idx);
-        for (i, (block_id, value)) in stash_vec.iter().enumerate() {
+
+        for (i, (block_id, value)) in stash_vec.kvs.iter().enumerate() {
             if block_id == id {
                 result = Some(value.clone());
             } else {
                 let deepest = calc_deepest(block_id.page_idx, path_idx, &layer_log_sizes);
                 assert!(deepest < num_layer as u8);
-                self.evict_infos_cache[deepest as usize].push(EvictInfo {
+                evict_infos_cache[deepest as usize].push(EvictInfo {
                     is_from_stash: true,
                     src: 0,
                     offset: i as u16,
@@ -261,13 +278,13 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
         let mut curr_evict_info_level = 0;
         let mut complete_flag = false;
         for dst in 0..num_layer {
-            let (down_empty_slots, up_empty_slots) = self.empty_slots_cache.split_at_mut(dst + 1);
+            let (down_empty_slots, up_empty_slots) = empty_slots_cache.split_at_mut(dst + 1);
             for slot_offset in down_empty_slots.last().unwrap().iter() {
                 // if curr_evict_info_level < dst {
                 //     // no available block to evict to dst
                 //     continue;
                 // }
-                while self.evict_infos_cache[curr_evict_info_level].is_empty() {
+                while evict_infos_cache[curr_evict_info_level].is_empty() {
                     curr_evict_info_level += 1;
                     if curr_evict_info_level == num_layer {
                         complete_flag = true;
@@ -282,16 +299,16 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
                     break;
                 }
 
-                let evict_info = self.evict_infos_cache[curr_evict_info_level].pop().unwrap();
+                let evict_info = evict_infos_cache[curr_evict_info_level].pop().unwrap();
 
                 if evict_info.is_from_stash {
-                    let (block_id, value) = stash_vec[evict_info.offset as usize];
+                    let (block_id, value) = stash_vec.kvs[evict_info.offset as usize];
                     path[dst].insert(*slot_offset, &block_id, &value);
                 } else {
                     let src = evict_info.src as usize;
                     if src <= dst {
                         // since the blocks are read from the evict_infos_cache in a top-down order, we can clear the vector and break here
-                        self.evict_infos_cache[curr_evict_info_level].clear();
+                        evict_infos_cache[curr_evict_info_level].clear();
                         break;
                     }
                     let src_offset = evict_info.offset as usize;
@@ -313,31 +330,33 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
                 break;
             }
         }
+        self.tree.write_path(path_idx, &path);
+        // drop(path_guard);
 
         // delete the evicted slots from stash
         for dst in 0..num_layer {
-            for evict_info in self.evict_infos_cache[dst].iter() {
+            for evict_info in evict_infos_cache[dst].iter() {
                 if evict_info.is_from_stash {
-                    self.stash_remain_cache.push(evict_info.offset);
+                    stash_remain_cache.push(evict_info.offset);
                 }
             }
         }
-        self.stash_remain_cache.sort_unstable();
+        stash_remain_cache.sort_unstable();
         let mut write_offset = 0;
-        for from_idx in self.stash_remain_cache.iter() {
+        for from_idx in stash_remain_cache.iter() {
             let from_idx = *from_idx as usize;
-            stash_vec.copy_within(from_idx..from_idx + 1, write_offset);
+            stash_vec
+                .kvs
+                .copy_within(from_idx..from_idx + 1, write_offset);
             write_offset += 1;
         }
-        let stash_reduced_len = stash_vec.len() - write_offset;
-        stash_vec.truncate(write_offset);
-        self.stash.num_kvs -= stash_reduced_len;
-        for i in 0..num_layer {
-            self.evict_infos_cache[i].clear();
-            self.empty_slots_cache[i].clear();
-        }
-        self.stash_remain_cache.clear();
-        self.tree.write_path_move(path_idx, path);
+        let stash_reduced_len = stash_vec.kvs.len() - write_offset;
+        stash_vec.kvs.truncate(write_offset);
+        // self.stash.num_kvs -= stash_reduced_len;
+        self.stash
+            .num_kvs
+            .fetch_sub(stash_reduced_len, Ordering::Relaxed);
+
         result
     }
 
@@ -360,7 +379,10 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
                 page_idx: new_page_id,
                 uid: new_uid,
             };
-
+            // we cannot directly insert to the new position with multi-threading,
+            // otherwise it reveals the position of the new entry when conflict happens
+            // instead, use a global RW lock to protect the stash and only insert to the stash
+            // when no conflict happens
             self.stash
                 .insert(new_page_id, new_id, result.unwrap().clone());
         }
@@ -424,7 +446,7 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
     }
     pub fn print_state(&self) {
         for i in 0..self.stash.size {
-            let kvs = &self.stash.stash[i].kvs;
+            let kvs = &self.stash.stash[i].lock().unwrap().kvs;
             println!("Stash entry: ");
             for (entry, value) in kvs.iter() {
                 println!("({:?} {:?})", entry, value);
@@ -435,7 +457,7 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
     pub fn get_all(&self) -> Vec<(BlockId, T)> {
         let mut ret = Vec::new();
         for i in 0..self.stash.size {
-            let kvs = &self.stash.stash[i].kvs;
+            let kvs = &self.stash.stash[i].lock().unwrap().kvs;
             for (entry, value) in kvs.iter() {
                 ret.push((entry.clone(), value.clone()));
             }

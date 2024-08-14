@@ -1,9 +1,11 @@
 use crate::encvec::EncVec;
 use crate::pagefile::PageFile;
 use crate::params::MIN_SEGMENT_SIZE;
+
 use bytemuck::{Pod, Zeroable};
 use std::sync::RwLock;
 
+// The implementation is not thread-safe for get / set, need to call read_lock / write_lock
 pub struct SegmentedVec<T: Clone + Pod + Zeroable> {
     segments: Vec<EncVec<T, PageFile>>,
     pub versions: RwLock<Vec<u8>>,
@@ -16,6 +18,7 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
         println!("Creating new SegmentedVec");
         let initial_segment = EncVec::new(MIN_SEGMENT_SIZE, &[0; 32]);
         let init_version = MIN_SEGMENT_SIZE.trailing_zeros() as u8;
+
         Self {
             segments: vec![initial_segment],
             size: MIN_SEGMENT_SIZE,
@@ -29,6 +32,11 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
         self.segments.push(new_segment);
         self.size *= 2;
         self.log_size += 1;
+        // let num_additional_locks = self.size / SHARD_SIZE - self.vec_lock.len();
+        // self.vec_lock.reserve(num_additional_locks);
+        // for _ in 0..num_additional_locks {
+        //     self.vec_lock.push(RwLock::new(()));
+        // }
     }
 
     // pub fn double_size_and_fork_self(&mut self) {
@@ -49,10 +57,9 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
     // }
     pub fn double_size_and_fork_self(&mut self) {
         self.double_size();
-        self.versions
-            .write()
-            .unwrap()
-            .extend_from_within(0..self.size);
+        let mut versions = self.versions.write().unwrap();
+        let len = versions.len();
+        versions.extend_from_within(0..len);
     }
 
     fn inner_indices(&self, index: usize) -> (usize, usize) {
@@ -66,8 +73,17 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
         if index >= self.size {
             return None;
         }
-        let version_raii = self.versions.read().unwrap();
-        let version = version_raii[index];
+        let versions = self.versions.read().unwrap();
+        let version = versions[index];
+        let actual_index = index & ((1 << version) - 1);
+        let (segment_index, within_segment_index) = self.inner_indices(actual_index);
+        self.segments[segment_index].get(within_segment_index)
+    }
+
+    fn get_no_lock(&self, index: usize, version: u8) -> Option<T> {
+        if index >= self.size {
+            return None;
+        }
         let actual_index = index & ((1 << version) - 1);
         let (segment_index, within_segment_index) = self.inner_indices(actual_index);
         self.segments[segment_index].get(within_segment_index)
@@ -84,7 +100,7 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
             // fork the original version to other indices
             let original_index = index & (version_size - 1);
             // TODO: avoid decrypt and re-encrypt
-            let original_value = self.get(original_index).unwrap();
+            let original_value = self.get_no_lock(original_index, version).unwrap();
             versions[original_index] = self.log_size;
             let mut to_idx = original_index + version_size;
             while to_idx < self.size {
@@ -106,6 +122,7 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
 }
 
 mod tests {
+    use crate::params::MIN_SEGMENT_SIZE;
     use crate::segvec::SegmentedVec;
 
     #[test]
@@ -115,16 +132,16 @@ mod tests {
         vec.double_size_and_fork_self();
         vec.set(0, &42);
         assert_eq!(vec.get(0), Some(42));
-        vec.set(1023, &43);
-        assert_eq!(vec.get(1023), Some(43));
-        vec.set(1024, &44);
-        assert_eq!(vec.get(1024), Some(44));
-        vec.set(2047, &45);
-        assert_eq!(vec.get(2047), Some(45));
-        vec.set(2048, &46);
-        assert_eq!(vec.get(2048), Some(46));
-        vec.set(4095, &47);
-        assert_eq!(vec.get(4095), Some(47));
-        assert_eq!(vec.get(4096), None);
+        vec.set(MIN_SEGMENT_SIZE - 1, &43);
+        assert_eq!(vec.get(MIN_SEGMENT_SIZE - 1), Some(43));
+        vec.set(MIN_SEGMENT_SIZE, &44);
+        assert_eq!(vec.get(MIN_SEGMENT_SIZE), Some(44));
+        vec.set(MIN_SEGMENT_SIZE * 2 - 1, &45);
+        assert_eq!(vec.get(MIN_SEGMENT_SIZE * 2 - 1), Some(45));
+        vec.set(MIN_SEGMENT_SIZE * 2, &46);
+        assert_eq!(vec.get(MIN_SEGMENT_SIZE * 2), Some(46));
+        vec.set(MIN_SEGMENT_SIZE * 4 - 1, &47);
+        assert_eq!(vec.get(MIN_SEGMENT_SIZE * 4 - 1), Some(47));
+        assert_eq!(vec.get(MIN_SEGMENT_SIZE * 4), None);
     }
 }

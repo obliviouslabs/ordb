@@ -1,10 +1,13 @@
 use crate::segvec::SegmentedVec;
 use bytemuck::{Pod, Zeroable};
 use std::fmt::Debug;
+use std::sync::{Arc, Mutex};
+const LOCK_COUNT: usize = 128;
 pub struct ORAMTree<T: Clone + Copy + Pod + Zeroable + Debug> {
     tree: Vec<SegmentedVec<T>>,
     top_vec_max_size: usize,
     total_size: usize,
+    vec_lock: Vec<Mutex<()>>,
 }
 
 impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
@@ -12,10 +15,16 @@ impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
         let mut tree = Vec::new();
         tree.push(SegmentedVec::new());
         let total_size = tree[0].capacity();
+        let mut vec_lock = Vec::new();
+        vec_lock.reserve(LOCK_COUNT);
+        for _ in 0..LOCK_COUNT {
+            vec_lock.push(Mutex::new(()));
+        }
         Self {
             tree,
             top_vec_max_size,
             total_size,
+            vec_lock,
         }
     }
 
@@ -31,22 +40,22 @@ impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
         path.reserve(self.tree.len());
         capacities.reserve(self.tree.len());
         for vec in self.tree.iter() {
-            path.push(vec.get(index % vec.capacity()).unwrap());
+            let level_idx = index % vec.capacity();
+            path.push(vec.get(level_idx).unwrap());
             capacities.push(vec.capacity());
         }
         (path, capacities)
     }
 
-    pub fn write_path(&mut self, index: usize, path: &Vec<T>) {
-        for (i, vec) in self.tree.iter_mut().enumerate() {
+    pub fn write_path(&self, index: usize, path: &Vec<T>) {
+        for (i, vec) in self.tree.iter().enumerate() {
             vec.set(index % vec.capacity(), &path[i]);
         }
     }
 
-    pub fn write_path_move(&mut self, index: usize, path: Vec<T>) {
-        for (i, vec) in self.tree.iter_mut().enumerate() {
-            vec.set(index % vec.capacity(), &path[i]);
-        }
+    pub fn lock_path(&self, index: usize) -> std::sync::MutexGuard<()> {
+        let shard_index = index % LOCK_COUNT;
+        self.vec_lock[shard_index].lock().unwrap()
     }
 
     pub fn scale(&mut self, mut target_branching_factor: usize) {

@@ -401,7 +401,7 @@ impl FlexOram {
         self.stash.concat(page_idx, new_stash_vec);
 
         // write back path
-        self.tree.write_path_move(page_idx, new_path);
+        self.tree.write_path(page_idx, &new_path);
         if result.is_some() {
             self.num_entry -= 1;
             self.num_bytes -= result.as_ref().unwrap().len() + META_SIZE;
