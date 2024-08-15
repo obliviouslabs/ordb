@@ -40,12 +40,12 @@ impl<T: SimpleVal, const N: usize> LinearOram<T, N> {
         self.val.len()
     }
 
-    pub fn print_state(&self) {
-        println!("LinearOram state:");
-        for i in 0..self.size() {
-            println!("{}: {:?}", i, self.val[i]);
-        }
-    }
+    // pub fn print_state(&self) {
+    //     println!("LinearOram state:");
+    //     for i in 0..self.size() {
+    //         println!("{}: {:?}", i, self.val[i]);
+    //     }
+    // }
 
     pub fn print_meta_state(&self) {
         println!("LinearOram meta state:");
@@ -63,7 +63,7 @@ mod tests {
         rec_oram.write(1, 2);
         rec_oram.write(2, 3);
         rec_oram.write(3, 4);
-        rec_oram.print_state();
+        // rec_oram.print_state();
         assert_eq!(rec_oram.read(0), Some(1));
         assert_eq!(rec_oram.read(1), Some(2));
         assert_eq!(rec_oram.read(2), Some(3));

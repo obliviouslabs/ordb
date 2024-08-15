@@ -259,7 +259,7 @@ impl<T: SimpleVal, const N: usize> RecOram<T, N> {
     pub fn print_state(&self) {
         println!("RecOram state:");
         self.pos_map.print_state();
-        self.val_ram.print_state();
+        // self.val_ram.print_state();
     }
 
     pub fn print_meta_state(&self) {

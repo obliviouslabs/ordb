@@ -6,7 +6,6 @@ use super::flexoram::FlexOram;
 const HASH_ENTRY_PER_PAGE: usize = BUFFER_SIZE / 24;
 const BKT_PER_PAGE: usize = (HASH_ENTRY_PER_PAGE / 16 + 4).next_power_of_two();
 const BKT_SIZE: usize = (BUFFER_SIZE / BKT_PER_PAGE - 16) / 24;
-use std::fmt::Debug;
 pub struct FlexOmap {
     flexoram: FlexOram,
     pos_map: CuckooHashMap<usize, BKT_SIZE, BKT_PER_PAGE>,
@@ -20,7 +19,7 @@ impl FlexOmap {
         }
     }
 
-    pub fn insert<K: AsRef<[u8]> + Debug>(&mut self, key: K, value: &Vec<u8>) -> Option<Vec<u8>> {
+    pub fn insert<K: AsRef<[u8]>, V: AsRef<[u8]>>(&mut self, key: K, value: V) -> Option<Vec<u8>> {
         let new_page_id = rand::random::<usize>();
         // println!("key {:?} insert to new page id {:?}", key, new_page_id);
         let mut hash_entry = self.pos_map.compute_hash_entry(key, new_page_id);
@@ -36,7 +35,7 @@ impl FlexOmap {
             .read_and_write(&hash_entry, value, new_page_id)
     }
 
-    pub fn get<K: AsRef<[u8]> + Debug>(&mut self, key: K) -> Option<Vec<u8>> {
+    pub fn get<K: AsRef<[u8]>>(&mut self, key: K) -> Option<Vec<u8>> {
         let new_page_id = rand::random::<usize>();
         // println!("key {:?} get and insert to new pos {:?}", key, new_page_id);
         let mut hash_entry = self.pos_map.compute_hash_entry(key, new_page_id);
@@ -60,11 +59,11 @@ impl FlexOmap {
         self.flexoram.print_meta_state();
     }
 
-    pub fn print_state(&mut self) {
-        println!("FlexOmap state:");
-        self.pos_map.print_state();
-        // self.flexoram.print_state();
-    }
+    // pub fn print_state(&mut self) {
+    //     println!("FlexOmap state:");
+    //     self.pos_map.print_state();
+    //     // self.flexoram.print_state();
+    // }
 }
 
 mod tests {

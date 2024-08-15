@@ -12,7 +12,7 @@ use bytemuck::{Pod, Zeroable};
 
 const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 struct Page {
     filled_bytes: u16,
     buffer: [u8; BUFFER_SIZE],
@@ -450,16 +450,16 @@ impl FlexOram {
         self.update(entry, overwrite_func, new_page_id);
     }
 
-    pub fn read_and_write(
+    pub fn read_and_write<V: AsRef<[u8]>>(
         &mut self,
         entry: &HashEntry<usize>,
-        value: &Vec<u8>,
+        value: V,
         new_page_id: usize,
     ) -> Option<Vec<u8>> {
         let mut ret = None;
         let overwrite_func = |x: Option<Vec<u8>>| {
             ret = x;
-            Some(value.clone())
+            Some(value.as_ref().to_vec())
         };
         self.update(entry, overwrite_func, new_page_id);
         ret

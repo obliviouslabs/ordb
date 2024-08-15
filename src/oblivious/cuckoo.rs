@@ -6,9 +6,8 @@ use rand;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct HashEntry<V: SimpleVal> {
     idx: [usize; 2],
     val: V,
@@ -62,7 +61,7 @@ impl<V: SimpleVal> HashEntry<V> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct HashBkt<V: SimpleVal, const BKT_SIZE: usize> {
     entries: [HashEntry<V>; BKT_SIZE],
 }
@@ -303,18 +302,18 @@ impl<V: SimpleVal, const BKT_SIZE: usize, const BKT_PER_PAGE: usize>
         println!("Full bkt stash size: {}", self.full_bkt_stash.len());
     }
 
-    pub fn print_state(&mut self) {
-        for i in 0..2 {
-            println!("Table {}", i);
-            for j in 0..self.tables[i].size() {
-                let bkt = self.tables[i].read(j).unwrap();
-                for k in 0..BKT_SIZE {
-                    println!("Bkt[{}][{}]: {:?}", j, k, bkt.entries[k]);
-                }
-            }
-        }
-        println!("Full bkt stash: {:?}", self.full_bkt_stash);
-    }
+    // pub fn print_state(&mut self) {
+    //     for i in 0..2 {
+    //         println!("Table {}", i);
+    //         for j in 0..self.tables[i].size() {
+    //             let bkt = self.tables[i].read(j).unwrap();
+    //             for k in 0..BKT_SIZE {
+    //                 println!("Bkt[{}][{}]: {:?}", j, k, bkt.entries[k]);
+    //             }
+    //         }
+    //     }
+    //     println!("Full bkt stash: {:?}", self.full_bkt_stash);
+    // }
 }
 
 mod tests {

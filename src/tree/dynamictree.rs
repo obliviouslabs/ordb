@@ -1,13 +1,12 @@
 use super::segvec::SegmentedVec;
 use bytemuck::{Pod, Zeroable};
-use std::fmt::Debug;
-pub struct ORAMTree<T: Clone + Copy + Pod + Zeroable + Debug> {
+pub struct ORAMTree<T: Clone + Copy + Pod + Zeroable> {
     tree: Vec<SegmentedVec<T>>,
     top_vec_max_size: usize,
     total_size: usize,
 }
 
-impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
+impl<T: Clone + Copy + Pod + Zeroable> ORAMTree<T> {
     pub fn new(top_vec_max_size: usize) -> Self {
         let mut tree = Vec::new();
         tree.push(SegmentedVec::new());
@@ -91,14 +90,14 @@ impl<T: Clone + Copy + Pod + Zeroable + Debug> ORAMTree<T> {
         self.total_size
     }
 
-    pub fn print_state(&self) {
-        for (i, vec) in self.tree.iter().enumerate() {
-            println!("Layer {}:", i);
-            for j in 0..vec.capacity() {
-                println!("{}: {:?}", j, vec.get(j).unwrap());
-            }
-        }
-    }
+    // pub fn print_state(&self) {
+    //     for (i, vec) in self.tree.iter().enumerate() {
+    //         println!("Layer {}:", i);
+    //         for j in 0..vec.capacity() {
+    //             println!("{}: {:?}", j, vec.get(j).unwrap());
+    //         }
+    //     }
+    // }
 
     pub fn get_all(&self) -> Vec<(usize, usize, T)> {
         let mut all = Vec::new();

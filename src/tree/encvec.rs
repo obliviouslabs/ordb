@@ -1,5 +1,4 @@
-const ENCRYPT_FLAG: bool = true;
-use crate::params::{KEY_SIZE, PAGE_SIZE};
+use crate::params::{ENCRYPT_FLAG, KEY_SIZE, PAGE_SIZE};
 use crate::storage::storage::BlockStorage;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};

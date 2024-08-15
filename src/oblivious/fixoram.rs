@@ -1,4 +1,3 @@
-use std::fmt::Debug;
 use std::vec;
 
 use crate::params::{KEY_SIZE, MAX_CACHE_SIZE, MIN_SEGMENT_SIZE, PAGE_SIZE};
@@ -8,7 +7,7 @@ use bytemuck::{Pod, Zeroable};
 
 pub const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct BlockId {
     pub page_idx: usize,
     pub uid: usize,
@@ -24,7 +23,7 @@ impl BlockId {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 struct Page<T: SimpleVal, const N: usize> {
     indices: [BlockId; N],
     data: [T; N],
@@ -170,7 +169,7 @@ impl<T: SimpleVal> Stash<T> {
             + self.size * (std::mem::size_of::<StashEntry<T>>() + 1)
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct EvictInfo {
     is_from_stash: bool,
     src: u8,
@@ -422,16 +421,16 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
             self.stash.num_bytes() as f64 / (1024 * 1024) as f64
         );
     }
-    pub fn print_state(&self) {
-        for i in 0..self.stash.size {
-            let kvs = &self.stash.stash[i].kvs;
-            println!("Stash entry: ");
-            for (entry, value) in kvs.iter() {
-                println!("({:?} {:?})", entry, value);
-            }
-        }
-        self.tree.print_state();
-    }
+    // pub fn print_state(&self) {
+    //     for i in 0..self.stash.size {
+    //         let kvs = &self.stash.stash[i].kvs;
+    //         println!("Stash entry: ");
+    //         for (entry, value) in kvs.iter() {
+    //             println!("({:?} {:?})", entry, value);
+    //         }
+    //     }
+    //     self.tree.print_state();
+    // }
     pub fn get_all(&self) -> Vec<(BlockId, T)> {
         let mut ret = Vec::new();
         for i in 0..self.stash.size {
