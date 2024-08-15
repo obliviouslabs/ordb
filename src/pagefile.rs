@@ -28,7 +28,7 @@ impl BlockStorage for PageFile {
     }
 
     // Write a single page
-    fn write(&mut self, block_idx: usize, buf: &[u8]) -> io::Result<()> {
+    fn write(&self, block_idx: usize, buf: &[u8]) -> io::Result<()> {
         let offset = block_idx * PAGE_SIZE;
         self.file.write_at(buf, offset as u64)?;
         Ok(())

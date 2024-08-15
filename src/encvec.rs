@@ -71,7 +71,7 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
         }
     }
 
-    pub fn put(&mut self, index: usize, value: &T) {
+    pub fn put(&self, index: usize, value: &T) {
         if index < self.size {
             // perform an AES-NI encryption
             let mut page = EncPage::new();

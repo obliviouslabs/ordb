@@ -5,5 +5,5 @@ pub trait BlockStorage {
     where
         Self: Sized;
     fn read(&self, block_idx: usize, buf: &mut [u8]) -> io::Result<()>;
-    fn write(&mut self, block_idx: usize, buf: &[u8]) -> io::Result<()>;
+    fn write(&self, block_idx: usize, buf: &[u8]) -> io::Result<()>;
 }
