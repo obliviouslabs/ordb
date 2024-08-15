@@ -34,7 +34,7 @@ impl<V: SimpleVal> HashEntry<V> {
         self.val == V::zeroed()
     }
 
-    pub fn delete(&mut self) {
+    pub fn remove(&mut self) {
         self.idx = [0 as usize, 0 as usize];
         self.val = V::zeroed();
     }
@@ -150,7 +150,7 @@ impl<V: SimpleVal, const BKT_SIZE: usize, const BKT_PER_PAGE: usize>
                         if iter == 0 && bkt.entries[j].is_match(entry.idx) {
                             // overwrite the entry
                             ret = Some(bkt.entries[j].val);
-                            bkt.entries[j].delete();
+                            bkt.entries[j].remove();
                             self.size -= 1;
                         }
                         if !inserted_flag && bkt.entries[j].idx[i] % table_capacity != bkt_idx {
@@ -246,6 +246,40 @@ impl<V: SimpleVal, const BKT_SIZE: usize, const BKT_PER_PAGE: usize>
         if stash_res.is_some() {
             old_val = stash_res.cloned();
             self.full_bkt_stash.insert(bkt_idx, entry.val);
+        }
+        old_val
+    }
+
+    // todo: avoid duplicate code
+    pub fn remove_hash_entry(&mut self, entry: &HashEntry<V>) -> Option<V> {
+        let bkt_idx = entry.idx;
+        let table_capacity = self.tables[0].size();
+        assert!(table_capacity == self.tables[1].size());
+        let mut old_val = None;
+        for i in 0..2 {
+            let update_func = |bkt: Option<HashBkt<V, BKT_SIZE>>| {
+                let mut bkt = bkt.unwrap_or_else(|| HashBkt::new());
+                for j in 0..BKT_SIZE {
+                    if bkt.entries[j].is_match(bkt_idx) {
+                        old_val = Some(bkt.entries[j].val);
+                        bkt.entries[j].remove();
+                        return Some(bkt);
+                    }
+                }
+                Some(bkt)
+            };
+            self.tables[i].update(bkt_idx[i] % table_capacity, update_func);
+            if old_val.is_some() {
+                self.size -= 1;
+                return old_val;
+            }
+        }
+        let stash_res = self.full_bkt_stash.remove(&bkt_idx);
+        if stash_res.is_some() {
+            old_val = stash_res;
+        }
+        if old_val.is_some() {
+            self.size -= 1;
         }
         old_val
     }

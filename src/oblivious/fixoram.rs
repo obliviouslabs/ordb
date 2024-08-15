@@ -313,7 +313,7 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
             }
         }
 
-        // delete the evicted slots from stash
+        // remove the evicted slots from stash
         for dst in 0..num_layer {
             for evict_info in self.evict_infos_cache[dst].iter() {
                 if evict_info.is_from_stash {

@@ -49,6 +49,20 @@ impl FlexOmap {
         self.flexoram.read(&hash_entry, new_page_id)
     }
 
+    pub fn remove<K: AsRef<[u8]>>(&mut self, key: K) -> Option<Vec<u8>> {
+        let new_page_id = rand::random::<usize>();
+        // println!("key {:?} get and insert to new pos {:?}", key, new_page_id);
+        let mut hash_entry = self.pos_map.compute_hash_entry(key, new_page_id);
+        let old_page_id_option = self.pos_map.remove_hash_entry(&hash_entry);
+        // println!("old_page_id_option: {:?}", old_page_id_option);
+        let old_page_id = match old_page_id_option {
+            Some(id) => id,
+            None => rand::random::<usize>(),
+        };
+        hash_entry.set_val(old_page_id);
+        self.flexoram.remove(&hash_entry)
+    }
+
     pub fn size(&self) -> usize {
         self.pos_map.size()
     }
@@ -147,6 +161,32 @@ mod tests {
             assert_eq!(map.get(&i.to_string()), Some(vec![i as u8; 32]));
         }
         assert_eq!(size, map.size());
+    }
+
+    #[test]
+    fn omap_test_remove() {
+        let mut ref_map = std::collections::HashMap::new();
+        let mut map = FlexOmap::new();
+        let size = 100000;
+        for _ in 0..2 {
+            // insert two rounds so that removed keys may be reinserted
+            for i in 0..size {
+                map.insert(&i.to_string(), &vec![i as u8; 32]);
+                ref_map.insert(i.to_string(), vec![i as u8; 32]);
+                if i % 3 == 1 {
+                    let remove_key = rand::random::<usize>() % i;
+                    let res = map.remove(&remove_key.to_string());
+                    assert_eq!(res, ref_map.remove(&remove_key.to_string()));
+                }
+            }
+        }
+        for i in 0..size {
+            assert_eq!(
+                map.get(&i.to_string()),
+                ref_map.get(&i.to_string()).cloned()
+            );
+        }
+        assert_eq!(map.size(), ref_map.len());
     }
 
     #[test]

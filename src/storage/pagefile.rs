@@ -44,7 +44,7 @@ impl BlockStorage for PageFile {
 
 impl Drop for PageFile {
     fn drop(&mut self) {
-        // delete the file when the PageFile instance goes out of scope
+        // remove the file when the PageFile instance goes out of scope
         let _ = std::fs::remove_file(&self.path);
     }
 }

@@ -465,6 +465,16 @@ impl FlexOram {
         ret
     }
 
+    pub fn remove(&mut self, entry: &HashEntry<usize>) -> Option<Vec<u8>> {
+        let mut ret = None;
+        let remove_func = |x| {
+            ret = x;
+            None
+        };
+        self.update(entry, remove_func, 0);
+        ret
+    }
+
     pub fn print_meta_state(&self) {
         println!("FlexOram meta state:");
         // println!("FlexOram pages count: {}", self.pages.capacity());

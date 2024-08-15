@@ -25,15 +25,11 @@ impl ObliviousDB {
         self.flexomap.lock().unwrap().insert(key, value);
     }
 
+    pub fn remove(&self, key: &[u8]) -> Option<Vec<u8>> {
+        self.flexomap.lock().unwrap().remove(key)
+    }
+
     pub fn print_meta_state(&self) {
         self.flexomap.lock().unwrap().print_meta_state();
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {}
 }
