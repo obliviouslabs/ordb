@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn scale_test() {
-        let mut map = CuckooHashMap::<u64, 16, 8>::new();
+        let mut map = CuckooHashMap::<u64, 8, 8>::new();
         for i in 0..10000 {
             let res = map.insert(&i.to_string(), i);
             assert_eq!(res, None);
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn scale_and_dup_test() {
-        let mut map = CuckooHashMap::<u64, 8, 16>::new();
+        let mut map = CuckooHashMap::<u64, 8, 8>::new();
         for i in 0..10000 {
             map.insert(&i.to_string(), i);
         }

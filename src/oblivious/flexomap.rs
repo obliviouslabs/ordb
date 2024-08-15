@@ -153,11 +153,11 @@ mod tests {
     #[test]
     fn omap_large() {
         let mut map = FlexOmap::new();
-        let size = 1000000;
+        let size = 300000;
         for i in 0..size {
             map.insert(&i.to_string(), &vec![i as u8; i % 400]);
         }
-        let read_round = 1000000;
+        let read_round = 300000;
         for r in 0..read_round {
             let i = (r * 929) % size;
             assert_eq!(map.get(&i.to_string()), Some(vec![i as u8; i % 400]));

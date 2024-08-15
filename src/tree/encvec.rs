@@ -38,7 +38,7 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
         }
     }
 
-    pub fn get(&self, index: usize) -> Option<T> {
+    pub fn get(&self, index: usize, nonce: u32) -> Option<T> {
         if index < self.size {
             // perform an AES-NI decryption
             let mut page = EncPage::new();
@@ -46,7 +46,8 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
             if err.is_err() {
                 panic!("read error: {:?}", err);
             }
-            let nonce_bytes = [0u8; 12];
+            let mut nonce_bytes = [0u8; 12];
+            nonce_bytes[0..4].copy_from_slice(&nonce.to_ne_bytes());
 
             let nonce = Nonce::try_from(&nonce_bytes[..]).expect("Failed to create nonce");
             let len_bytes = [page.data[0], page.data[1]];
@@ -71,11 +72,12 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
         }
     }
 
-    pub fn put(&self, index: usize, value: &T) {
+    pub fn put(&self, index: usize, value: &T, nonce: u32) {
         if index < self.size {
             // perform an AES-NI encryption
             let mut page = EncPage::new();
-            let nonce_bytes = [0u8; 12];
+            let mut nonce_bytes = [0u8; 12];
+            nonce_bytes[0..4].copy_from_slice(&nonce.to_ne_bytes());
             let nonce = Nonce::try_from(&nonce_bytes[..]).expect("Failed to create nonce");
 
             if ENCRYPT_FLAG {
@@ -96,6 +98,28 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
             }
         }
     }
+
+    pub fn raw_get(&self, index: usize) -> Option<[u8; PAGE_SIZE]> {
+        if index < self.size {
+            let mut page = [0; PAGE_SIZE];
+            let err = self.file_pages.read(index, &mut page);
+            if err.is_err() {
+                panic!("read error: {:?}", err);
+            }
+            Some(page)
+        } else {
+            None
+        }
+    }
+
+    pub fn raw_put(&self, index: usize, value: &[u8; PAGE_SIZE]) {
+        if index < self.size {
+            let err = self.file_pages.write(index, value);
+            if err.is_err() {
+                panic!("write error: {:?}", err);
+            }
+        }
+    }
 }
 
 mod tests {
@@ -105,9 +129,9 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut vec = EncVec::<u128, PageFile>::new(1024, &[0u8; 32]);
-        vec.put(0, &42);
-        assert_eq!(vec.get(0), Some(42));
+        let vec = EncVec::<u128, PageFile>::new(1024, &[0u8; 32]);
+        vec.put(0, &42, 123);
+        assert_eq!(vec.get(0, 123), Some(42));
     }
 
     #[derive(Clone, Copy)]
@@ -136,7 +160,7 @@ mod tests {
             for i in 0..8 {
                 buffer.data[i] = (round >> (i * 8)) as u8;
             }
-            vec.put(round % BUFFER_SIZE, &buffer);
+            vec.put(round % BUFFER_SIZE, &buffer, 1);
         }
     }
 }
