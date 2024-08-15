@@ -1,6 +1,6 @@
 // use crate::linearoram::LinearOram;
-use crate::recoram::RecOram;
-use crate::utils::SimpleVal;
+use super::recoram::RecOram;
+use crate::utils::utils::SimpleVal;
 use bytemuck::{Pod, Zeroable};
 use rand;
 use rayon::prelude::*;

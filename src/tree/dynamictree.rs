@@ -1,4 +1,4 @@
-use crate::segvec::SegmentedVec;
+use super::segvec::SegmentedVec;
 use bytemuck::{Pod, Zeroable};
 use std::fmt::Debug;
 pub struct ORAMTree<T: Clone + Copy + Pod + Zeroable + Debug> {

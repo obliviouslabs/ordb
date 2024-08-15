@@ -5,9 +5,9 @@
 
 use std::vec;
 
-use crate::cuckoo::HashEntry;
-use crate::dynamictree::{calc_deepest, ORAMTree};
+use super::cuckoo::HashEntry;
 use crate::params::{KEY_SIZE, MAX_CACHE_SIZE, MIN_SEGMENT_SIZE, PAGE_SIZE};
+use crate::tree::dynamictree::{calc_deepest, ORAMTree};
 use bytemuck::{Pod, Zeroable};
 
 const BUFFER_SIZE: usize = PAGE_SIZE - 2 * std::mem::size_of::<u16>() - KEY_SIZE;

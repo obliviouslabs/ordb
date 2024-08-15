@@ -1,5 +1,5 @@
 use crate::params::PAGE_SIZE;
-use crate::storage::BlockStorage;
+use crate::storage::storage::BlockStorage;
 use std::fs::OpenOptions;
 use std::io::{self};
 use std::os::unix::prelude::FileExt;

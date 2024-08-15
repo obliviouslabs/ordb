@@ -1,6 +1,6 @@
-use crate::encvec::EncVec;
-use crate::pagefile::PageFile;
+use super::encvec::EncVec;
 use crate::params::MIN_SEGMENT_SIZE;
+use crate::storage::pagefile::PageFile;
 use bytemuck::{Pod, Zeroable};
 
 pub struct SegmentedVec<T: Clone + Pod + Zeroable> {
@@ -108,7 +108,7 @@ impl<T: Clone + Pod + Zeroable> SegmentedVec<T> {
 }
 
 mod tests {
-    use crate::segvec::SegmentedVec;
+    use crate::tree::segvec::SegmentedVec;
 
     #[test]
     fn it_works() {

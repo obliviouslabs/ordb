@@ -1,4 +1,4 @@
-use crate::utils::SimpleVal;
+use crate::utils::utils::SimpleVal;
 pub struct LinearOram<T: SimpleVal, const N: usize> {
     val: Vec<T>,
 }

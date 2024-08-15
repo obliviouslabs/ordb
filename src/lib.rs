@@ -1,17 +1,8 @@
-mod cuckoo;
-mod dynamictree;
-mod encvec;
-mod fixoram;
-mod flexomap;
-mod flexoram;
-mod linearoram;
-mod pagefile;
+mod oblivious;
 mod params;
-mod recoram;
-mod segvec;
 mod storage;
+mod tree;
 mod utils;
-
 pub fn add(left: usize, right: usize) -> usize {
     left + right
 }

@@ -1,8 +1,8 @@
 use num::integer::Roots;
 
-use crate::cuckoo::CuckooHashMap;
-use crate::fixoram::BUFFER_SIZE;
-use crate::flexoram::FlexOram;
+use super::cuckoo::CuckooHashMap;
+use super::fixoram::BUFFER_SIZE;
+use super::flexoram::FlexOram;
 const HASH_ENTRY_PER_PAGE: usize = BUFFER_SIZE / 24;
 const BKT_PER_PAGE: usize = (HASH_ENTRY_PER_PAGE / 16 + 4).next_power_of_two();
 const BKT_SIZE: usize = (BUFFER_SIZE / BKT_PER_PAGE - 16) / 24;

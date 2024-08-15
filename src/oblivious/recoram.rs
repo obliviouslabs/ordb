@@ -1,5 +1,5 @@
-use crate::fixoram::{BlockId, FixOram};
-use crate::utils::{get_low_bits, RandGen, SimpleVal};
+use super::fixoram::{BlockId, FixOram};
+use crate::utils::utils::{get_low_bits, RandGen, SimpleVal};
 use bytemuck::{Pod, Zeroable};
 use std::fmt::Debug;
 

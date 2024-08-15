@@ -1,6 +1,6 @@
 const ENCRYPT_FLAG: bool = true;
 use crate::params::{KEY_SIZE, PAGE_SIZE};
-use crate::storage::BlockStorage;
+use crate::storage::storage::BlockStorage;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use bytemuck::{Pod, Zeroable};
@@ -99,9 +99,9 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
 }
 
 mod tests {
-    use crate::encvec::EncVec;
-    use crate::pagefile::PageFile;
     use crate::params::PAGE_SIZE;
+    use crate::storage::pagefile::PageFile;
+    use crate::tree::encvec::EncVec;
 
     #[test]
     fn it_works() {
