@@ -42,12 +42,6 @@ impl<T: Clone + Copy + Pod + Zeroable> ORAMTree<T> {
         }
     }
 
-    pub fn write_path_move(&mut self, index: usize, path: Vec<T>) {
-        for (i, vec) in self.tree.iter_mut().enumerate() {
-            vec.set(index % vec.capacity(), &path[i]);
-        }
-    }
-
     pub fn scale(&mut self, mut target_branching_factor: usize) {
         if target_branching_factor < 2 {
             target_branching_factor = 2;

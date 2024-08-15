@@ -336,7 +336,7 @@ impl<T: SimpleVal, const N: usize> FixOram<T, N> {
             self.empty_slots_cache[i].clear();
         }
         self.stash_remain_cache.clear();
-        self.tree.write_path_move(path_idx, path);
+        self.tree.write_path(path_idx, &path);
         result
     }
 
