@@ -17,7 +17,7 @@ fn benchmark_db_insert_small_kv(c: &mut Criterion) {
         b.iter(|| {
             let key = rand::random::<[u8; KEY_SIZE]>();
             let value = vec![0; VALUE_SIZE];
-            db.insert(key.to_vec(), value.to_vec());
+            black_box(db.insert(key.to_vec(), value.to_vec()));
         })
     });
 }
@@ -36,7 +36,7 @@ fn benchmark_db_insert_large_kv(c: &mut Criterion) {
         b.iter(|| {
             let key = rand::random::<[u8; KEY_SIZE]>();
             let value = vec![0; VALUE_SIZE];
-            db.insert(key.to_vec(), value);
+            black_box(db.insert(key.to_vec(), value));
         })
     });
 }
@@ -56,7 +56,7 @@ fn benchmark_db_insert_varied_val(c: &mut Criterion) {
             let key = rand::random::<[u8; KEY_SIZE]>();
             let value_size = rand::random::<usize>() % 512;
             let value = vec![0; value_size];
-            db.insert(key.to_vec(), value);
+            black_box(db.insert(key.to_vec(), value));
         })
     });
 }
@@ -74,7 +74,7 @@ fn benchmark_db_get_100k(c: &mut Criterion) {
     c.bench_function("db_get_100k", |b| {
         b.iter(|| {
             let key = rand::random::<[u8; KEY_SIZE]>();
-            db.get(&key);
+            black_box(db.get(&key));
         })
     });
 }
@@ -92,7 +92,7 @@ fn benchmark_db_get_1m(c: &mut Criterion) {
     c.bench_function("db_get_1m", |b| {
         b.iter(|| {
             let key = rand::random::<[u8; KEY_SIZE]>();
-            db.get(&key);
+            black_box(db.get(&key));
         })
     });
 }
@@ -110,7 +110,7 @@ fn benchmark_db_get_10m_small_val(c: &mut Criterion) {
     c.bench_function("db_get_10m", |b| {
         b.iter(|| {
             let key = rand::random::<[u8; KEY_SIZE]>();
-            db.get(&key);
+            black_box(db.get(&key));
         })
     });
 }
