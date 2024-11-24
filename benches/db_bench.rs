@@ -7,16 +7,35 @@ fn benchmark_db_insert_small_kv(c: &mut Criterion) {
     let db = ObliviousDB::new();
     const KEY_SIZE: usize = 8;
     const VALUE_SIZE: usize = 8;
-    const DB_SIZE: usize = 10000;
+    const DB_SIZE: usize = 1_000_000;
     for _ in 0..DB_SIZE {
         let key = rand::random::<[u8; KEY_SIZE]>();
-        let value = vec![0; VALUE_SIZE];
+        let value = rand::random::<[u8; VALUE_SIZE]>();
         db.insert(key.to_vec(), value.to_vec());
     }
     c.bench_function("db_insert", |b| {
         b.iter(|| {
             let key = rand::random::<[u8; KEY_SIZE]>();
-            let value = vec![0; VALUE_SIZE];
+            let value = rand::random::<[u8; VALUE_SIZE]>();
+            black_box(db.insert(key.to_vec(), value.to_vec()));
+        })
+    });
+}
+
+fn benchmark_db_insert_solidity(c: &mut Criterion) {
+    let db = ObliviousDB::new();
+    const KEY_SIZE: usize = 32;
+    const VALUE_SIZE: usize = 32;
+    const DB_SIZE: usize = 1_000_000;
+    for _ in 0..DB_SIZE {
+        let key = rand::random::<[u8; KEY_SIZE]>();
+        let value = rand::random::<[u8; VALUE_SIZE]>();
+        db.insert(key.to_vec(), value.to_vec());
+    }
+    c.bench_function("db_insert_solidity", |b| {
+        b.iter(|| {
+            let key = rand::random::<[u8; KEY_SIZE]>();
+            let value = rand::random::<[u8; VALUE_SIZE]>();
             black_box(db.insert(key.to_vec(), value.to_vec()));
         })
     });
@@ -26,7 +45,7 @@ fn benchmark_db_insert_large_kv(c: &mut Criterion) {
     let db = ObliviousDB::new();
     const KEY_SIZE: usize = 32;
     const VALUE_SIZE: usize = 512;
-    const DB_SIZE: usize = 100000;
+    const DB_SIZE: usize = 1_000_000;
     for _ in 0..DB_SIZE {
         let key = rand::random::<[u8; KEY_SIZE]>();
         let value = vec![0; VALUE_SIZE];
@@ -44,7 +63,7 @@ fn benchmark_db_insert_large_kv(c: &mut Criterion) {
 fn benchmark_db_insert_varied_val(c: &mut Criterion) {
     let db = ObliviousDB::new();
     const KEY_SIZE: usize = 32;
-    const DB_SIZE: usize = 100000;
+    const DB_SIZE: usize = 1_000_000;
     for _ in 0..DB_SIZE {
         let key = rand::random::<[u8; KEY_SIZE]>();
         let value_size = rand::random::<usize>() % 512;
@@ -65,7 +84,7 @@ fn benchmark_db_get_100k(c: &mut Criterion) {
     let db = ObliviousDB::new();
     const KEY_SIZE: usize = 32;
     const VALUE_SIZE: usize = 512;
-    const DB_SIZE: usize = 100000;
+    const DB_SIZE: usize = 100_000;
     for _ in 0..DB_SIZE {
         let key = rand::random::<[u8; KEY_SIZE]>();
         let value = vec![0; VALUE_SIZE];
@@ -83,7 +102,7 @@ fn benchmark_db_get_1m(c: &mut Criterion) {
     let db = ObliviousDB::new();
     const KEY_SIZE: usize = 32;
     const VALUE_SIZE: usize = 512;
-    const DB_SIZE: usize = 1000000;
+    const DB_SIZE: usize = 1_000_000;
     for _ in 0..DB_SIZE {
         let key = rand::random::<[u8; KEY_SIZE]>();
         let value = vec![0; VALUE_SIZE];
@@ -101,7 +120,7 @@ fn benchmark_db_get_10m_small_val(c: &mut Criterion) {
     let db = ObliviousDB::new();
     const KEY_SIZE: usize = 32;
     const VALUE_SIZE: usize = 32;
-    const DB_SIZE: usize = 10000000;
+    const DB_SIZE: usize = 10_000_000;
     for _ in 0..DB_SIZE {
         let key = rand::random::<[u8; KEY_SIZE]>();
         let value = vec![0; VALUE_SIZE];
@@ -117,6 +136,7 @@ fn benchmark_db_get_10m_small_val(c: &mut Criterion) {
 
 criterion_group!(
     benches,
+    benchmark_db_insert_solidity,
     benchmark_db_insert_small_kv,
     benchmark_db_insert_large_kv,
     benchmark_db_insert_varied_val,
