@@ -48,7 +48,7 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
             let mut nonce_bytes = [0u8; 12];
             nonce_bytes[0..4].copy_from_slice(&nonce.to_ne_bytes());
 
-            let nonce = Nonce::try_from(&nonce_bytes[..]).expect("Failed to create nonce");
+            let nonce = Nonce::from_slice(&nonce_bytes);
             let len_bytes = [page.data[0], page.data[1]];
             let len = u16::from_ne_bytes(len_bytes);
             if len == 0 {
@@ -77,7 +77,7 @@ impl<T: Clone + Pod + Zeroable, StoreT: BlockStorage> EncVec<T, StoreT> {
             let mut page = EncPage::new();
             let mut nonce_bytes = [0u8; 12];
             nonce_bytes[0..4].copy_from_slice(&nonce.to_ne_bytes());
-            let nonce = Nonce::try_from(&nonce_bytes[..]).expect("Failed to create nonce");
+            let nonce = Nonce::from_slice(&nonce_bytes);
 
             if ENCRYPT_FLAG {
                 let encrypted_data = self
